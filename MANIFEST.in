@@ -1,0 +1,9 @@
+include README.md
+include LICENSE
+include SUMMARY.md
+include TUNE_IMPLEMENTATION.md
+include TEST_RESULTS.md
+include TESTING_SUMMARY.md
+recursive-include examples *.py
+recursive-include tests *.py *.md
+exclude tests/__pycache__
