@@ -653,8 +653,9 @@ class RadiodControl:
         
         # CRITICAL: Must bind to the multicast port (5006) to receive multicast packets
         # Multicast packets are addressed to specific port, not just IP
+        # Use 0.0.0.0 and SO_REUSEADDR to allow multiple processes
         try:
-            status_sock.bind(('', 5006))  # Bind to radiod status port
+            status_sock.bind(('0.0.0.0', 5006))  # Bind to radiod status port on all interfaces
             bound_port = status_sock.getsockname()[1]
             logger.debug(f"Bound to port {bound_port} for multicast reception")
         except OSError as e:
