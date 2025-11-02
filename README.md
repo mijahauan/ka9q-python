@@ -87,6 +87,8 @@ for ssrc, info in channels.items():
 
 See `examples/` directory for complete applications:
 
+- **`tune.py`** - Interactive channel tuning utility (Python implementation of ka9q-radio's tune)
+- **`tune_example.py`** - Programmatic examples of using the tune() method
 - **`simple_am_radio.py`** - Minimal AM broadcast listener
 - **`superdarn_recorder.py`** - Ionospheric radar monitoring
 - **`codar_oceanography.py`** - Ocean current radar
@@ -138,6 +140,30 @@ control.set_gain(ssrc=12345678, gain_db=20.0)
 # Set frequency shift (CW offset)
 control.set_shift_frequency(ssrc=12345678, shift_hz=800)
 ```
+
+#### tune()
+
+Tune a channel and retrieve its status (like the tune utility in ka9q-radio):
+
+```python
+# Tune a channel and get immediate status feedback
+status = control.tune(
+    ssrc=12345678,
+    frequency_hz=14.074e6,
+    preset="usb",
+    sample_rate=12000,
+    timeout=5.0
+)
+
+print(f"Frequency: {status['frequency']/1e6:.3f} MHz")
+print(f"SNR: {status['snr']:.1f} dB")
+```
+
+This method sends commands to radiod and waits for a status response, providing immediate confirmation of the channel state. Useful for:
+- Verifying channel configuration
+- Getting real-time signal quality metrics (SNR, power levels)
+- Interactive tuning applications
+- Debugging channel issues
 
 #### verify_channel()
 

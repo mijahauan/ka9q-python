@@ -22,7 +22,7 @@ __author__ = 'GRAPE Signal Recorder Project'
 
 from .control import RadiodControl
 from .discovery import discover_channels, discover_radiod_services, ChannelInfo
-from .types import StatusType
+from .types import StatusType, Encoding
 from .exceptions import Ka9qError, ConnectionError, CommandError
 
 __all__ = [
@@ -31,6 +31,7 @@ __all__ = [
     'discover_radiod_services',
     'ChannelInfo',
     'StatusType',
+    'Encoding',
     'Ka9qError',
     'ConnectionError',
     'CommandError',
