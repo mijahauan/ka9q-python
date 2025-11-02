@@ -313,9 +313,14 @@ class RadiodControl:
             # Set TTL for multicast packets
             self.socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
             
+            # Store both status and control addresses
+            # Status address is where we listen for status multicast
+            # Control address is where we send commands (same as status for now)
+            self.status_mcast_addr = mcast_addr
             self.dest_addr = (mcast_addr, 5006)  # Standard radiod control port
             
             logger.info(f"Connected to radiod at {mcast_addr}:5006")
+            logger.debug(f"Status multicast: {self.status_mcast_addr}, Control: {self.dest_addr}")
             logger.debug(f"Socket options: REUSEADDR=1, MULTICAST_IF=INADDR_ANY, MULTICAST_LOOP=1, MULTICAST_TTL=2")
             
         except Exception as e:
@@ -624,22 +629,22 @@ class RadiodControl:
             except OSError as e:
                 logger.warning(f"Could not set SO_REUSEPORT: {e}")
         
-        # Bind to any available port (multicast reception doesn't require specific port)
-        # We join the multicast group below, which is what matters for receiving
+        # Bind to port 5006 (radiod status port)
+        # Status messages are sent to the multicast group on this port
         try:
-            status_sock.bind(('', 0))  # 0 = let OS choose available port
-            bound_port = status_sock.getsockname()[1]
-            logger.debug(f"Bound to port {bound_port}")
+            status_sock.bind(('', 5006))  # radiod status port
+            logger.debug(f"Bound to port 5006 for status reception")
         except OSError as e:
             logger.error(f"Failed to bind socket: {e}")
             raise
         
         # Join the multicast group on any interface
+        # Use the status multicast address (where status packets are sent)
         mreq = struct.pack('=4s4s', 
-                          socket.inet_aton(self.dest_addr[0]),  # multicast group
+                          socket.inet_aton(self.status_mcast_addr),  # status multicast group
                           socket.inet_aton('0.0.0.0'))  # any interface (INADDR_ANY)
         status_sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
-        logger.debug(f"Joined multicast group {self.dest_addr[0]} for status listening")
+        logger.debug(f"Joined status multicast group {self.status_mcast_addr} for status listening")
         
         # Set timeout for polling
         status_sock.settimeout(0.1)  # 100ms timeout

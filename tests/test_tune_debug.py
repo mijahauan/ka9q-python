@@ -44,9 +44,11 @@ def test_basic_tune(host):
         control = RadiodControl(host)
         print(f"✓ Connected successfully")
         print(f"  Status address: {control.status_address}")
-        print(f"  Control address: {control.control_address}")
+        print(f"  Control destination: {control.dest_addr[0]}:{control.dest_addr[1]}")
     except Exception as e:
         print(f"✗ Connection failed: {e}")
+        import traceback
+        traceback.print_exc()
         return False
     
     # Test 1: Basic frequency tune
