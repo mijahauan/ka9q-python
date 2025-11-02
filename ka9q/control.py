@@ -651,12 +651,12 @@ class RadiodControl:
             except OSError as e:
                 logger.warning(f"Could not set SO_REUSEPORT: {e}")
         
-        # Bind to any available port (multicast reception doesn't require specific port)
-        # We join the multicast group below, which is what matters for receiving
+        # CRITICAL: Must bind to the multicast port (5006) to receive multicast packets
+        # Multicast packets are addressed to specific port, not just IP
         try:
-            status_sock.bind(('', 0))  # 0 = let OS choose available port
+            status_sock.bind(('', 5006))  # Bind to radiod status port
             bound_port = status_sock.getsockname()[1]
-            logger.debug(f"Bound to port {bound_port}")
+            logger.debug(f"Bound to port {bound_port} for multicast reception")
         except OSError as e:
             logger.error(f"Failed to bind socket: {e}")
             raise
