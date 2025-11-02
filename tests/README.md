@@ -4,7 +4,9 @@ This directory contains comprehensive tests for the ka9q-python package, with a 
 
 ## Test Organization
 
-### Unit Tests
+### Unit Tests (Mocked - No Radiod Required)
+
+These tests verify code structure and logic using mocks. They run without a live radiod instance.
 
 #### `test_decode_functions.py`
 Tests for TLV (Type-Length-Value) decode functions that parse status responses from radiod:
@@ -123,9 +125,73 @@ tests/test_decode_functions.py::TestDecodeInt::test_decode_single_byte PASSED
 
 ## Integration Testing
 
+**IMPORTANT:** Integration tests verify that tune commands actually take effect on radiod hardware, not just that packets are sent.
+
+### Automated Integration Tests (`test_integration.py`)
+
+These tests require a running radiod instance and verify commands actually work:
+
+```bash
+# Run all integration tests
+pytest tests/test_integration.py -v --radiod-host=radiod.local
+
+# Run specific tests
+pytest tests/test_integration.py::TestIntegrationTuneFrequency -v --radiod-host=radiod.local
+pytest tests/test_integration.py::TestIntegrationTuneGain -v --radiod-host=radiod.local
+
+# Skip integration tests (for CI/CD)
+export SKIP_INTEGRATION=1
+pytest tests/ -v
+```
+
+**What integration tests verify:**
+- ✓ Frequency changes actually occur
+- ✓ Gain/volume changes take effect  
+- ✓ Preset/mode changes work
+- ✓ Filter edges update
+- ✓ Sample rate changes apply
+- ✓ Multiple channels coexist
+- ✓ Re-tuning works
+
+### Debug Tool (`test_tune_debug.py`)
+
+**Use this first** if commands aren't working:
+
+```bash
+python tests/test_tune_debug.py radiod.local
+```
+
+Shows:
+- Whether radiod is reachable
+- What commands are being sent
+- What status is received
+- Whether requested values match reported values
+- Detailed diagnostics of any mismatches
+
+Example output when working:
+```
+✓ Connected successfully
+✓ Tune command succeeded
+Frequency verification:
+  Requested: 14.074000 MHz
+  Reported:  14.074000 MHz
+  Diff:      0.0 Hz
+  ✓ Frequency match!
+```
+
+### Troubleshooting Commands Not Working
+
+See `tests/TROUBLESHOOTING_CHECKLIST.md` for detailed diagnosis.
+
+Quick checks:
+1. Run debug tool: `python tests/test_tune_debug.py radiod.local`
+2. Check radiod logs: `journalctl -u radiod -f`
+3. Test with native tune.c: `tune -r localhost -s 12345 -f 14M -m usb`
+4. Verify multicast: `ip route | grep 224`
+
 ### Manual Integration Tests
 
-For integration testing with a live radiod instance, use the example scripts:
+For manual testing with a live radiod instance, use the example scripts:
 
 #### 1. Test CLI Tool
 
