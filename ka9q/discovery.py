@@ -1,14 +1,17 @@
 """
-Stream discovery using ka9q-radio control utility
+Stream discovery for ka9q-radio channels
 
-This module uses the 'control' utility from ka9q-radio to discover
-active channels and their SSRCs, frequencies, and multicast addresses.
+This module provides functions to discover active channels by listening
+to radiod's status multicast stream (native Python) or optionally using
+the 'control' utility from ka9q-radio as a fallback.
 """
 
 import subprocess
 import re
 import logging
-from typing import Dict, List, Tuple
+import time
+import select
+from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -26,18 +29,126 @@ class ChannelInfo:
     port: int
 
 
-def discover_channels(status_address: str, timeout: float = 30.0) -> Dict[int, ChannelInfo]:
+def discover_channels_native(status_address: str, listen_duration: float = 2.0) -> Dict[int, ChannelInfo]:
     """
-    Discover channels using the 'control' utility
+    Discover channels by listening to radiod status multicast (pure Python)
+    
+    This implementation listens directly to radiod's status multicast stream
+    and decodes the status packets without requiring external executables.
     
     Args:
-        status_address: Status multicast address (e.g., "bee1-hf-status.local")
-        timeout: Timeout for control command
+        status_address: Status multicast address (e.g., "radiod.local" or IP)
+        listen_duration: How long to listen for status packets in seconds (default: 2.0)
         
     Returns:
         Dictionary mapping SSRC to ChannelInfo
     """
-    logger.info(f"Discovering channels via control utility from {status_address}")
+    from .control import RadiodControl
+    
+    logger.info(f"Discovering channels via native Python listener from {status_address}")
+    logger.info(f"Listening for {listen_duration} seconds...")
+    
+    channels = {}
+    
+    try:
+        # Create RadiodControl instance to get multicast setup
+        control = RadiodControl(status_address)
+        
+        # Set up status listener socket
+        status_sock = control._setup_status_listener()
+        
+        start_time = time.time()
+        packet_count = 0
+        
+        try:
+            while time.time() - start_time < listen_duration:
+                # Poll for incoming packets with short timeout
+                ready = select.select([status_sock], [], [], 0.1)
+                if not ready[0]:
+                    continue
+                
+                # Receive status packet
+                try:
+                    buffer, addr = status_sock.recvfrom(8192)
+                    packet_count += 1
+                    logger.debug(f"Received {len(buffer)} bytes from {addr}")
+                except Exception as e:
+                    logger.debug(f"Error receiving packet: {e}")
+                    continue
+                
+                # Skip non-status packets (type byte != 0)
+                if len(buffer) == 0 or buffer[0] != 0:
+                    logger.debug(f"Skipping non-status packet (type={buffer[0] if buffer else 'empty'})")
+                    continue
+                
+                # Decode status packet
+                try:
+                    status = control._decode_status_response(buffer)
+                except Exception as e:
+                    logger.debug(f"Error decoding status packet: {e}")
+                    continue
+                
+                # Extract SSRC - required field
+                ssrc = status.get('ssrc')
+                if not ssrc:
+                    logger.debug("Status packet missing SSRC, skipping")
+                    continue
+                
+                # Build ChannelInfo from status
+                # Extract destination socket info
+                dest = status.get('destination', {})
+                mcast_addr = dest.get('address', '') if isinstance(dest, dict) else ''
+                port = dest.get('port', 0) if isinstance(dest, dict) else 0
+                
+                channel = ChannelInfo(
+                    ssrc=ssrc,
+                    preset=status.get('preset', 'unknown'),
+                    sample_rate=status.get('sample_rate', 0),
+                    frequency=status.get('frequency', 0.0),
+                    snr=status.get('snr', float('-inf')),
+                    multicast_address=mcast_addr,
+                    port=port
+                )
+                
+                # Store or update channel info
+                if ssrc not in channels:
+                    channels[ssrc] = channel
+                    logger.debug(
+                        f"Discovered channel: SSRC={ssrc}, freq={channel.frequency/1e6:.3f} MHz, "
+                        f"rate={channel.sample_rate} Hz, preset={channel.preset}"
+                    )
+                else:
+                    # Update with latest info
+                    channels[ssrc] = channel
+        
+        finally:
+            status_sock.close()
+            control.close()
+        
+        logger.info(f"Discovered {len(channels)} channels from {packet_count} packets")
+        
+    except Exception as e:
+        logger.error(f"Error during native channel discovery: {e}")
+        logger.debug(f"Exception details:", exc_info=True)
+    
+    return channels
+
+
+def discover_channels_via_control(status_address: str, timeout: float = 30.0) -> Dict[int, ChannelInfo]:
+    """
+    Discover channels using the 'control' utility from ka9q-radio
+    
+    This is a fallback method that requires the 'control' executable
+    from ka9q-radio to be installed on the system.
+    
+    Args:
+        status_address: Status multicast address (e.g., "radiod.local")
+        timeout: Timeout for control command (default: 30.0 seconds)
+        
+    Returns:
+        Dictionary mapping SSRC to ChannelInfo
+    """
+    logger.info(f"Discovering channels via 'control' utility from {status_address}")
     
     channels = {}
     
@@ -117,6 +228,39 @@ def discover_channels(status_address: str, timeout: float = 30.0) -> Dict[int, C
         logger.error(f"Error running control utility: {e}")
     
     return channels
+
+
+def discover_channels(status_address: str, 
+                      listen_duration: float = 2.0,
+                      use_native: bool = True) -> Dict[int, ChannelInfo]:
+    """
+    Discover channels using the best available method
+    
+    By default, uses native Python implementation. If use_native=False or
+    if native discovery fails, falls back to the 'control' utility.
+    
+    Args:
+        status_address: Status multicast address (e.g., "radiod.local")
+        listen_duration: Duration to listen for native discovery (default: 2.0 seconds)
+        use_native: If True, use native Python listener; if False, use control utility
+        
+    Returns:
+        Dictionary mapping SSRC to ChannelInfo
+    """
+    if use_native:
+        try:
+            logger.debug("Attempting native channel discovery")
+            channels = discover_channels_native(status_address, listen_duration)
+            if channels:
+                return channels
+            else:
+                logger.warning("Native discovery found no channels, trying control utility fallback")
+        except Exception as e:
+            logger.warning(f"Native discovery failed ({e}), trying control utility fallback")
+    
+    # Fall back to control utility
+    logger.debug("Using control utility for channel discovery")
+    return discover_channels_via_control(status_address)
 
 
 def find_channels_by_frequencies(

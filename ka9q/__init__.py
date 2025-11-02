@@ -21,13 +21,21 @@ __version__ = '1.0.0'
 __author__ = 'GRAPE Signal Recorder Project'
 
 from .control import RadiodControl
-from .discovery import discover_channels, discover_radiod_services, ChannelInfo
+from .discovery import (
+    discover_channels,
+    discover_channels_native,
+    discover_channels_via_control,
+    discover_radiod_services,
+    ChannelInfo
+)
 from .types import StatusType, Encoding
 from .exceptions import Ka9qError, ConnectionError, CommandError
 
 __all__ = [
     'RadiodControl',
     'discover_channels',
+    'discover_channels_native',
+    'discover_channels_via_control',
     'discover_radiod_services',
     'ChannelInfo',
     'StatusType',

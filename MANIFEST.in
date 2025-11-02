@@ -1,0 +1,21 @@
+# Include documentation
+include README.md
+include LICENSE
+include SUMMARY.md
+include TUNE_IMPLEMENTATION.md
+include NATIVE_DISCOVERY.md
+include CROSS_PLATFORM_SUPPORT.md
+include TEST_RESULTS.md
+include TESTING_SUMMARY.md
+
+# Include examples
+recursive-include examples *.py
+
+# Include tests
+recursive-include tests *.py
+
+# Exclude compiled files
+global-exclude *.pyc
+global-exclude __pycache__
+global-exclude *.pyo
+global-exclude .DS_Store
