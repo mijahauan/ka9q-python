@@ -10,7 +10,7 @@ Control radiod channels for any application: AM/FM/SSB radio, WSPR monitoring, S
 ✅ **Complete API** - All 85+ radiod parameters exposed  
 ✅ **Channel control** - Create, configure, discover channels  
 ✅ **Pure Python** - No compiled dependencies  
-✅ **Well tested** - Used in production GRAPE recorder  
+✅ **Well tested** - Comprehensive test coverage  
 ✅ **Documented** - Comprehensive examples included  
 
 ## Installation
@@ -22,7 +22,7 @@ pip install ka9q
 Or install from source:
 
 ```bash
-git clone https://github.com/yourusername/ka9q-python.git
+git clone https://github.com/mijahauan/ka9q-python.git
 cd ka9q-python
 pip install -e .
 ```
@@ -263,7 +263,7 @@ The API doesn't assume you're:
 - Using any specific sample rate
 - Monitoring any specific frequencies
 - Storing anything
-- Using GRAPE format
+- Using any particular data format
 
 **You specify everything.** This makes it reusable for any project.
 
@@ -299,7 +299,7 @@ Each module is independent and can be used separately.
 
 ```bash
 # Clone
-git clone https://github.com/yourusername/ka9q-python.git
+git clone https://github.com/mijahauan/ka9q-python.git
 cd ka9q-python
 
 # Install dev dependencies
@@ -337,25 +337,27 @@ from ka9q import RadiodControl
 # Your application code here
 ```
 
-### Example: GRAPE Signal Recorder
+### Example: Application-Specific Wrapper
 
-The [GRAPE Signal Recorder](https://github.com/yourusername/signal-recorder) uses this library:
+You can create application-specific wrappers with your own defaults:
 
 ```python
 from ka9q import RadiodControl
 
-# GRAPE-specific wrapper adds defaults
-class GRAPEChannelManager:
+# Application-specific wrapper with custom defaults
+class MyChannelManager:
     def __init__(self, radiod_address):
         self.control = RadiodControl(radiod_address)
     
-    def create_grape_channel(self, frequency_mhz):
-        # GRAPE defaults: 16kHz IQ, no AGC
-        self.control.create_channel(
+    def create_my_channel(self, frequency_mhz, sample_rate=16000):
+        # Your application's defaults
+        self.control.create_and_configure_channel(
             ssrc=int(frequency_mhz * 1e6),
             frequency_hz=frequency_mhz * 1e6,
             preset="iq",
-            sample_rate=16000
+            sample_rate=sample_rate,
+            agc_enable=0,
+            gain=0.0
         )
 ```
 
@@ -375,12 +377,10 @@ MIT License - see LICENSE file
 ## Credits
 
 - Based on [ka9q-radio](https://github.com/ka9q/ka9q-radio) by Phil Karn KA9Q
-- Developed for [GRAPE Signal Recorder](https://github.com/yourusername/signal-recorder)
-- Contributors: [List]
+- Developed by Michael J. Hauan AC0G
 
 ## See Also
 
 - [ka9q-radio](https://github.com/ka9q/ka9q-radio) - The SDR software this controls
-- [GRAPE Signal Recorder](https://github.com/yourusername/signal-recorder) - HF recording system using this library
 - [SuperDARN](http://vt.superdarn.org/) - Ionospheric radar network
 - [CODAR](https://codaros.com/) - Ocean current radar systems

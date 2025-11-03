@@ -17,8 +17,8 @@ Basic usage:
     )
 """
 
-__version__ = '1.0.0'
-__author__ = 'GRAPE Signal Recorder Project'
+__version__ = '2.0.0'
+__author__ = 'Michael J. Hauan'
 
 from .control import RadiodControl
 from .discovery import (

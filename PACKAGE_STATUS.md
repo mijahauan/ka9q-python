@@ -26,7 +26,7 @@ pip install dist/ka9q-1.0.0-py3-none-any.whl
 
 ### 3. From GitHub (when published)
 ```bash
-pip install git+https://github.com/yourusername/ka9q-python.git
+pip install git+https://github.com/mijahauan/ka9q-python.git
 ```
 
 ### 4. From PyPI (when published)

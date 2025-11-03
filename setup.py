@@ -12,13 +12,13 @@ long_description = readme.read_text() if readme.exists() else ''
 
 setup(
     name='ka9q',
-    version='1.0.0',
+    version='2.0.0',
     description='Python interface for ka9q-radio control and monitoring',
     long_description=long_description,
     long_description_content_type='text/markdown',
-    author='GRAPE Signal Recorder Project',
-    author_email='',
-    url='https://github.com/yourusername/ka9q-python',
+    author='Michael J. Hauan',
+    author_email='ac0g@hauan.org',
+    url='https://github.com/mijahauan/ka9q-python',
     packages=find_packages(),
     python_requires='>=3.9',
     install_requires=[

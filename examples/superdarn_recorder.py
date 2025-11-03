@@ -10,7 +10,7 @@ SuperDARN Requirements:
 - High time resolution (radar pulses)
 
 This example shows how to set up channels for SuperDARN monitoring
-without any GRAPE/WWV/recording assumptions.
+without application-specific assumptions.
 """
 
 from ka9q import RadiodControl

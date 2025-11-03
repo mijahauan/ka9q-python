@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ka9q"
-version = "1.0.0"
+version = "2.0.0"
 description = "Python interface for ka9q-radio control and monitoring"
 readme = "README.md"
 authors = [
-    {name = "GRAPE Signal Recorder Project"}
+    {name = "Michael J. Hauan", email = "ac0g@hauan.org"}
 ]
 license = "MIT"
 requires-python = ">=3.9"
@@ -36,10 +36,10 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/ka9q-python"
-Documentation = "https://github.com/yourusername/ka9q-python/blob/main/README.md"
-Repository = "https://github.com/yourusername/ka9q-python"
-Issues = "https://github.com/yourusername/ka9q-python/issues"
+Homepage = "https://github.com/mijahauan/ka9q-python"
+Documentation = "https://github.com/mijahauan/ka9q-python/blob/main/README.md"
+Repository = "https://github.com/mijahauan/ka9q-python"
+Issues = "https://github.com/mijahauan/ka9q-python/issues"
 
 [tool.setuptools]
 packages = ["ka9q"]

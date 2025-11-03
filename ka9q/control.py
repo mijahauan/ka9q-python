@@ -6,8 +6,8 @@ TLV (Type-Length-Value) encoding, based on ka9q-radio's status.c/status.h.
 
 ARCHITECTURE:
 - This module exposes ALL radiod capabilities and parameters
-- Application-specific defaults (e.g., GRAPE's 16kHz IQ channels) live in
-  higher-level modules (grape_recorder.py, config files)
+- Application-specific defaults should be implemented in higher-level modules
+  or configuration files
 - Reusable for any application needing radiod channel control
 
 USAGE:
@@ -550,10 +550,10 @@ class RadiodControl:
         self.send_command(cmdbuffer)
     
     def create_and_configure_channel(self, ssrc: int, frequency_hz: float, 
-                                     preset: str = "iq", sample_rate: Optional[int] = 16000,
+                                     preset: str = "iq", sample_rate: Optional[int] = None,
                                      agc_enable: int = 0, gain: float = 0.0):
         """
-        Create a new channel and configure it (GRAPE-compatible)
+        Create a new channel and configure it
         
         This sends ALL parameters in a SINGLE packet to radiod.
         This is critical because radiod creates the channel when it receives
@@ -563,11 +563,11 @@ class RadiodControl:
             ssrc: SSRC for the new channel
             frequency_hz: Frequency in Hz
             preset: Demod type (default: "iq" = linear mode)
-            sample_rate: Sample rate in Hz (default: 16000 for GRAPE)
-            agc_enable: AGC enable (0=off, 1=on) (default: 0 for GRAPE)
-            gain: Manual gain setting in dB (default: 0.0 for GRAPE)
+            sample_rate: Sample rate in Hz (optional)
+            agc_enable: AGC enable (0=off, 1=on) (default: 0)
+            gain: Manual gain setting in dB (default: 0.0)
         """
-        logger.info(f"Creating GRAPE channel: SSRC={ssrc}, freq={frequency_hz/1e6:.3f} MHz, "
+        logger.info(f"Creating channel: SSRC={ssrc}, freq={frequency_hz/1e6:.3f} MHz, "
                    f"demod={preset}, rate={sample_rate}Hz, agc={agc_enable}, gain={gain}dB")
         
         # Build a single command packet with ALL parameters
@@ -581,7 +581,6 @@ class RadiodControl:
         logger.info(f"Setting preset for SSRC {ssrc} to {preset}")
         
         # DEMOD_TYPE: 0=linear (IQ/USB/LSB/etc), 1=FM
-        # For IQ/GRAPE, we want linear mode
         demod_type = 0 if preset.lower() in ['iq', 'usb', 'lsb', 'cw', 'am'] else 1
         encode_int(cmdbuffer, StatusType.DEMOD_TYPE, demod_type)
         logger.info(f"Setting DEMOD_TYPE for SSRC {ssrc} to {demod_type}")
@@ -590,16 +589,16 @@ class RadiodControl:
         encode_double(cmdbuffer, StatusType.RADIO_FREQUENCY, frequency_hz)
         logger.info(f"Setting frequency for SSRC {ssrc} to {frequency_hz/1e6:.3f} MHz")
         
-        # Sample rate (16000 Hz for GRAPE)
+        # Sample rate
         if sample_rate:
             encode_int(cmdbuffer, StatusType.OUTPUT_SAMPRATE, sample_rate)
             logger.info(f"Setting sample rate for SSRC {ssrc} to {sample_rate} Hz")
         
-        # AGC setting (disable for GRAPE - use fixed gain)
+        # AGC setting
         encode_int(cmdbuffer, StatusType.AGC_ENABLE, agc_enable)
         logger.info(f"Setting AGC_ENABLE for SSRC {ssrc} to {agc_enable}")
         
-        # Gain setting (0 dB for GRAPE)
+        # Gain setting
         encode_double(cmdbuffer, StatusType.GAIN, gain)
         logger.info(f"Setting GAIN for SSRC {ssrc} to {gain} dB")
         
@@ -611,7 +610,7 @@ class RadiodControl:
         # Send the single packet
         self.send_command(cmdbuffer)
         
-        logger.info(f"GRAPE channel {ssrc} created and configured")
+        logger.info(f"Channel {ssrc} created and configured")
     
     def verify_channel(self, ssrc: int, expected_freq: Optional[float] = None) -> bool:
         """

@@ -11,12 +11,12 @@ pip install ka9q
 
 ### From GitHub (development version)
 ```bash
-pip install git+https://github.com/yourusername/ka9q-python.git
+pip install git+https://github.com/mijahauan/ka9q-python.git
 ```
 
 ### From Local Clone
 ```bash
-git clone https://github.com/yourusername/ka9q-python.git
+git clone https://github.com/mijahauan/ka9q-python.git
 cd ka9q-python
 pip install .
 ```
@@ -25,7 +25,7 @@ pip install .
 
 ### Editable Install
 ```bash
-git clone https://github.com/yourusername/ka9q-python.git
+git clone https://github.com/mijahauan/ka9q-python.git
 cd ka9q-python
 pip install -e .
 ```
@@ -183,7 +183,7 @@ twine upload dist/*
 
 ```bash
 # Clone and install in editable mode
-git clone https://github.com/yourusername/ka9q-python.git
+git clone https://github.com/mijahauan/ka9q-python.git
 cd ka9q-python
 pip install -e ".[dev]"
 
@@ -250,5 +250,5 @@ if __name__ == '__main__':
 ## Support
 
 - Documentation: See README.md and other docs in the repository
-- Issues: https://github.com/yourusername/ka9q-python/issues
+- Issues: https://github.com/mijahauan/ka9q-python/issues
 - Examples: See `examples/` directory
