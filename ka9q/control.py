@@ -256,7 +256,10 @@ class RadiodControl:
                 mcast_addr = self.status_address
                 logger.info(f"Using direct IP address: {mcast_addr}")
             else:
-                # Try avahi-resolve first
+                # Try platform-specific mDNS resolution first, then fall back to getaddrinfo
+                mcast_addr = None
+                
+                # Try avahi-resolve (Linux)
                 try:
                     result = subprocess.run(
                         ['avahi-resolve', '-n', self.status_address],
@@ -270,16 +273,40 @@ class RadiodControl:
                         parts = result.stdout.strip().split()
                         if len(parts) >= 2:
                             mcast_addr = parts[1]
-                        else:
-                            raise ValueError(f"Unexpected avahi-resolve output: {result.stdout}")
-                    else:
-                        raise ValueError(f"avahi-resolve failed: {result.stderr}")
+                            logger.debug(f"Resolved via avahi-resolve: {mcast_addr}")
                 except (subprocess.TimeoutExpired, FileNotFoundError, ValueError) as e:
-                    # Try getaddrinfo as fallback
-                    logger.warning(f"avahi-resolve failed ({e}), trying getaddrinfo")
+                    logger.debug(f"avahi-resolve not available: {e}")
+                
+                # Try dns-sd (macOS) if avahi didn't work
+                if not mcast_addr:
+                    try:
+                        result = subprocess.run(
+                            ['dns-sd', '-G', 'v4', self.status_address],
+                            capture_output=True,
+                            text=True,
+                            timeout=5
+                        )
+                        
+                        if result.returncode == 0:
+                            # Parse output to find IP address
+                            for line in result.stdout.split('\n'):
+                                if self.status_address in line and 'can be reached' in line:
+                                    # Example: "Timestamp  A/AAAA/AAAA (ipv6) ...can be reached at 239.251.200.193"
+                                    parts = line.split()
+                                    if len(parts) > 0:
+                                        mcast_addr = parts[-1]
+                                        logger.debug(f"Resolved via dns-sd: {mcast_addr}")
+                                        break
+                    except (subprocess.TimeoutExpired, FileNotFoundError, ValueError) as e:
+                        logger.debug(f"dns-sd not available: {e}")
+                
+                # Final fallback: Python's getaddrinfo (works everywhere)
+                if not mcast_addr:
+                    logger.debug("Falling back to getaddrinfo")
                     import socket as sock
                     addr_info = sock.getaddrinfo(self.status_address, None, sock.AF_INET, sock.SOCK_DGRAM)
                     mcast_addr = addr_info[0][4][0]
+                    logger.debug(f"Resolved via getaddrinfo: {mcast_addr}")
             
             # Create UDP socket
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -629,11 +656,13 @@ class RadiodControl:
             except OSError as e:
                 logger.warning(f"Could not set SO_REUSEPORT: {e}")
         
-        # Bind to port 5006 (radiod status port)
-        # Status messages are sent to the multicast group on this port
+        # CRITICAL: Must bind to the multicast port (5006) to receive multicast packets
+        # Multicast packets are addressed to specific port, not just IP
+        # Use 0.0.0.0 and SO_REUSEADDR to allow multiple processes
         try:
-            status_sock.bind(('', 5006))  # radiod status port
-            logger.debug(f"Bound to port 5006 for status reception")
+            status_sock.bind(('0.0.0.0', 5006))  # Bind to radiod status port on all interfaces
+            bound_port = status_sock.getsockname()[1]
+            logger.debug(f"Bound to port {bound_port} for multicast reception")
         except OSError as e:
             logger.error(f"Failed to bind socket: {e}")
             raise

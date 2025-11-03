@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ka9q"
+version = "1.0.0"
+description = "Python interface for ka9q-radio control and monitoring"
+readme = "README.md"
+authors = [
+    {name = "GRAPE Signal Recorder Project"}
+]
+license = "MIT"
+requires-python = ">=3.9"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Telecommunications Industry",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Communications :: Ham Radio",
+    "Topic :: Scientific/Engineering",
+]
+keywords = ["ka9q-radio", "sdr", "ham-radio", "radio-control"]
+dependencies = [
+    "numpy>=1.24.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/ka9q-python"
+Documentation = "https://github.com/yourusername/ka9q-python/blob/main/README.md"
+Repository = "https://github.com/yourusername/ka9q-python"
+Issues = "https://github.com/yourusername/ka9q-python/issues"
+
+[tool.setuptools]
+packages = ["ka9q"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"

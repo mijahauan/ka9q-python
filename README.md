@@ -87,6 +87,7 @@ for ssrc, info in channels.items():
 
 See `examples/` directory for complete applications:
 
+- **`discover_example.py`** - Channel discovery methods (native Python and control utility)
 - **`tune.py`** - Interactive channel tuning utility (Python implementation of ka9q-radio's tune)
 - **`tune_example.py`** - Programmatic examples of using the tune() method
 - **`simple_am_radio.py`** - Minimal AM broadcast listener
@@ -178,14 +179,23 @@ if control.verify_channel(ssrc=12345678, expected_freq=14.074e6):
 
 #### discover_channels()
 
-Query existing channels:
+Query existing channels using native Python (no external dependencies):
 
 ```python
 from ka9q import discover_channels
 
+# Native Python discovery (default, listens for 2 seconds)
 channels = discover_channels("radiod.local")
 # Returns: {ssrc: ChannelInfo(...), ...}
+
+# Customize listen duration
+channels = discover_channels("radiod.local", listen_duration=5.0)
+
+# Force use of 'control' utility (requires ka9q-radio installed)
+channels = discover_channels("radiod.local", use_native=False)
 ```
+
+The native discovery method listens directly to radiod's status multicast stream and requires no external executables. It will automatically fall back to the `control` utility if native discovery fails or finds no channels.
 
 #### discover_radiod_services()
 
@@ -271,9 +281,19 @@ Each module is independent and can be used separately.
 
 ## Requirements
 
+### Core Requirements
 - Python 3.9+
-- `avahi-utils` (for service discovery)
 - Running `radiod` instance on network
+
+### Optional Requirements (for enhanced functionality)
+- **mDNS tools** (for .local hostname resolution):
+  - Linux: `avahi-utils` package provides `avahi-resolve` and `avahi-browse`
+  - macOS: `dns-sd` (built-in) for hostname resolution
+  - Fallback: Python's `getaddrinfo` works everywhere
+- **ka9q-radio tools** (optional fallback):
+  - `control` utility for channel discovery (falls back to native Python)
+
+**Note**: The package works cross-platform without any external tools! They just provide optimization for mDNS resolution.
 
 ## Development
 
