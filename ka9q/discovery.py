@@ -11,6 +11,8 @@ import re
 import logging
 import time
 import select
+import socket
+import struct
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
 
@@ -29,6 +31,118 @@ class ChannelInfo:
     port: int
 
 
+def _resolve_multicast_address(status_address: str) -> str:
+    """
+    Resolve a hostname or .local address to an IP for multicast.
+    
+    This is a lightweight version that doesn't require RadiodControl.
+    Tries multiple resolution methods for cross-platform compatibility.
+    
+    Args:
+        status_address: Hostname, .local name, or IP address
+        
+    Returns:
+        Resolved IP address as string
+    """
+    import re
+    
+    # If already an IP address, return it
+    if re.match(r'^\d+\.\d+\.\d+\.\d+$', status_address):
+        logger.debug(f"Address {status_address} is already an IP")
+        return status_address
+    
+    # Try avahi-resolve for .local addresses (Linux)
+    try:
+        result = subprocess.run(
+            ['avahi-resolve', '-n', status_address],
+            capture_output=True,
+            text=True,
+            timeout=2
+        )
+        if result.returncode == 0:
+            parts = result.stdout.strip().split()
+            if len(parts) >= 2:
+                logger.debug(f"Resolved {status_address} to {parts[1]} via avahi-resolve")
+                return parts[1]
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+    
+    # Try dns-sd for .local addresses (macOS)
+    try:
+        result = subprocess.run(
+            ['dns-sd', '-G', 'v4', status_address],
+            capture_output=True,
+            text=True,
+            timeout=2
+        )
+        if result.returncode == 0:
+            # Parse dns-sd output
+            for line in result.stdout.split('\n'):
+                if status_address in line and re.search(r'\d+\.\d+\.\d+\.\d+', line):
+                    match = re.search(r'(\d+\.\d+\.\d+\.\d+)', line)
+                    if match:
+                        addr = match.group(1)
+                        logger.debug(f"Resolved {status_address} to {addr} via dns-sd")
+                        return addr
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+    
+    # Fallback to getaddrinfo (works everywhere)
+    try:
+        addr_info = socket.getaddrinfo(status_address, None, socket.AF_INET, socket.SOCK_DGRAM)
+        addr = addr_info[0][4][0]
+        logger.debug(f"Resolved {status_address} to {addr} via getaddrinfo")
+        return addr
+    except Exception as e:
+        raise ConnectionError(f"Failed to resolve {status_address}: {e}")
+
+
+def _create_status_listener_socket(multicast_addr: str) -> socket.socket:
+    """
+    Create a UDP socket configured to listen for radiod status multicast.
+    
+    This is a standalone function that doesn't require RadiodControl,
+    making it lightweight for discovery operations.
+    
+    Args:
+        multicast_addr: IP address of the multicast group
+        
+    Returns:
+        Configured socket ready to receive status packets
+    """
+    # Create UDP socket
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    
+    # Set SO_REUSEPORT if available (allows multiple processes)
+    if hasattr(socket, 'SO_REUSEPORT'):
+        try:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+            logger.debug("SO_REUSEPORT enabled")
+        except OSError as e:
+            logger.debug(f"Could not set SO_REUSEPORT: {e}")
+    
+    # Bind to multicast port on all interfaces
+    try:
+        sock.bind(('0.0.0.0', 5006))  # radiod status port
+        logger.debug(f"Bound to port 5006 for multicast reception")
+    except OSError as e:
+        logger.error(f"Failed to bind socket to port 5006: {e}")
+        raise
+    
+    # Join multicast group on any interface
+    mreq = struct.pack('=4s4s',
+                      socket.inet_aton(multicast_addr),  # multicast group
+                      socket.inet_aton('0.0.0.0'))  # any interface (INADDR_ANY)
+    sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+    logger.debug(f"Joined multicast group {multicast_addr}")
+    
+    # Set timeout for non-blocking reception
+    sock.settimeout(0.1)
+    
+    return sock
+
+
 def discover_channels_native(status_address: str, listen_duration: float = 2.0) -> Dict[int, ChannelInfo]:
     """
     Discover channels by listening to radiod status multicast (pure Python)
@@ -43,93 +157,101 @@ def discover_channels_native(status_address: str, listen_duration: float = 2.0) 
     Returns:
         Dictionary mapping SSRC to ChannelInfo
     """
+    # Import decoder function without creating full RadiodControl instance
     from .control import RadiodControl
     
     logger.info(f"Discovering channels via native Python listener from {status_address}")
     logger.info(f"Listening for {listen_duration} seconds...")
     
     channels = {}
+    status_sock = None
     
     try:
-        # Create RadiodControl instance to get multicast setup
-        control = RadiodControl(status_address)
+        # Resolve address and create lightweight socket (no RadiodControl overhead)
+        multicast_addr = _resolve_multicast_address(status_address)
+        status_sock = _create_status_listener_socket(multicast_addr)
         
-        # Set up status listener socket
-        status_sock = control._setup_status_listener()
+        # Create temporary RadiodControl just to access decoder
+        # TODO: Extract decoder into standalone module to avoid this
+        temp_control = RadiodControl.__new__(RadiodControl)
+        temp_control.status_mcast_addr = multicast_addr
         
         start_time = time.time()
         packet_count = 0
         
-        try:
-            while time.time() - start_time < listen_duration:
-                # Poll for incoming packets with short timeout
-                ready = select.select([status_sock], [], [], 0.1)
-                if not ready[0]:
-                    continue
-                
-                # Receive status packet
-                try:
-                    buffer, addr = status_sock.recvfrom(8192)
-                    packet_count += 1
-                    logger.debug(f"Received {len(buffer)} bytes from {addr}")
-                except Exception as e:
-                    logger.debug(f"Error receiving packet: {e}")
-                    continue
-                
-                # Skip non-status packets (type byte != 0)
-                if len(buffer) == 0 or buffer[0] != 0:
-                    logger.debug(f"Skipping non-status packet (type={buffer[0] if buffer else 'empty'})")
-                    continue
-                
-                # Decode status packet
-                try:
-                    status = control._decode_status_response(buffer)
-                except Exception as e:
-                    logger.debug(f"Error decoding status packet: {e}")
-                    continue
-                
-                # Extract SSRC - required field
-                ssrc = status.get('ssrc')
-                if not ssrc:
-                    logger.debug("Status packet missing SSRC, skipping")
-                    continue
-                
-                # Build ChannelInfo from status
-                # Extract destination socket info
-                dest = status.get('destination', {})
-                mcast_addr = dest.get('address', '') if isinstance(dest, dict) else ''
-                port = dest.get('port', 0) if isinstance(dest, dict) else 0
-                
-                channel = ChannelInfo(
-                    ssrc=ssrc,
-                    preset=status.get('preset', 'unknown'),
-                    sample_rate=status.get('sample_rate', 0),
-                    frequency=status.get('frequency', 0.0),
-                    snr=status.get('snr', float('-inf')),
-                    multicast_address=mcast_addr,
-                    port=port
+        while time.time() - start_time < listen_duration:
+            # Use remaining time or 0.5s, whichever is smaller (adaptive timeout)
+            remaining = listen_duration - (time.time() - start_time)
+            select_timeout = min(remaining, 0.5)
+            
+            ready = select.select([status_sock], [], [], select_timeout)
+            if not ready[0]:
+                continue
+            
+            # Receive status packet
+            try:
+                buffer, addr = status_sock.recvfrom(8192)
+                packet_count += 1
+                logger.debug(f"Received {len(buffer)} bytes from {addr}")
+            except Exception as e:
+                logger.debug(f"Error receiving packet: {e}")
+                continue
+            
+            # Skip non-status packets (type byte != 0)
+            if len(buffer) == 0 or buffer[0] != 0:
+                logger.debug(f"Skipping non-status packet (type={buffer[0] if buffer else 'empty'})")
+                continue
+            
+            # Decode status packet using temporary control instance
+            try:
+                status = temp_control._decode_status_response(buffer)
+            except Exception as e:
+                logger.debug(f"Error decoding status packet: {e}")
+                continue
+            
+            # Extract SSRC - required field
+            ssrc = status.get('ssrc')
+            if not ssrc:
+                logger.debug("Status packet missing SSRC, skipping")
+                continue
+            
+            # Build ChannelInfo from status
+            # Extract destination socket info
+            dest = status.get('destination', {})
+            mcast_addr = dest.get('address', '') if isinstance(dest, dict) else ''
+            port = dest.get('port', 0) if isinstance(dest, dict) else 0
+            
+            channel = ChannelInfo(
+                ssrc=ssrc,
+                preset=status.get('preset', 'unknown'),
+                sample_rate=status.get('sample_rate', 0),
+                frequency=status.get('frequency', 0.0),
+                snr=status.get('snr', float('-inf')),
+                multicast_address=mcast_addr,
+                port=port
+            )
+            
+            # Store or update channel info
+            if ssrc not in channels:
+                channels[ssrc] = channel
+                logger.debug(
+                    f"Discovered channel: SSRC={ssrc}, freq={channel.frequency/1e6:.3f} MHz, "
+                    f"rate={channel.sample_rate} Hz, preset={channel.preset}"
                 )
-                
-                # Store or update channel info
-                if ssrc not in channels:
-                    channels[ssrc] = channel
-                    logger.debug(
-                        f"Discovered channel: SSRC={ssrc}, freq={channel.frequency/1e6:.3f} MHz, "
-                        f"rate={channel.sample_rate} Hz, preset={channel.preset}"
-                    )
-                else:
-                    # Update with latest info
-                    channels[ssrc] = channel
-        
-        finally:
-            status_sock.close()
-            control.close()
+            else:
+                # Update with latest info
+                channels[ssrc] = channel
         
         logger.info(f"Discovered {len(channels)} channels from {packet_count} packets")
         
     except Exception as e:
         logger.error(f"Error during native channel discovery: {e}")
         logger.debug(f"Exception details:", exc_info=True)
+    
+    finally:
+        # Clean up socket
+        if status_sock:
+            status_sock.close()
     
     return channels
 
