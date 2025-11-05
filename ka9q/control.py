@@ -209,20 +209,30 @@ def decode_socket(data: bytes, length: int) -> dict:
         
     Returns:
         Dictionary with 'family', 'address', and 'port' keys
+    
+    Note:
+        ka9q-radio encodes sockets WITHOUT an explicit family field.
+        Family is inferred from length:
+        - 6 bytes = IPv4 (4 bytes address + 2 bytes port)
+        - 10 bytes = IPv6 (8 bytes address + 2 bytes port)
     """
-    # Socket encoding varies by address family
-    # For IPv4: 2 bytes family + 2 bytes port + 4 bytes address
-    if length < 8:
-        return {'family': 'unknown', 'address': '', 'port': 0}
-    
-    family = struct.unpack('>H', data[0:2])[0]
-    port = struct.unpack('>H', data[2:4])[0]
-    
-    if family == 2:  # AF_INET
-        address = socket.inet_ntoa(data[4:8])
+    if length == 6:
+        # IPv4: 4 bytes address + 2 bytes port (big-endian)
+        address = socket.inet_ntoa(data[0:4])
+        port = struct.unpack('>H', data[4:6])[0]
         return {'family': 'IPv4', 'address': address, 'port': port}
+    elif length == 10:
+        # IPv6: 8 bytes address + 2 bytes port (big-endian)
+        # Note: This is a truncated IPv6 address (only 8 bytes instead of 16)
+        # This appears to be how ka9q-radio encodes it
+        address_bytes = data[0:8]
+        port = struct.unpack('>H', data[8:10])[0]
+        # Format as hex string since it's truncated
+        address = ':'.join(f'{address_bytes[i]:02x}{address_bytes[i+1]:02x}' 
+                          for i in range(0, 8, 2))
+        return {'family': 'IPv6', 'address': address, 'port': port}
     else:
-        return {'family': f'unknown({family})', 'address': '', 'port': port}
+        return {'family': 'unknown', 'address': '', 'port': 0}
 
 
 class RadiodControl:
