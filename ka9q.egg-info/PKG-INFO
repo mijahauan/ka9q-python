@@ -1,15 +1,19 @@
-Metadata-Version: 2.1
+Metadata-Version: 2.4
 Name: ka9q
-Version: 1.0.0
+Version: 2.0.0
 Summary: Python interface for ka9q-radio control and monitoring
-Home-page: https://github.com/yourusername/ka9q-python
-Author: GRAPE Signal Recorder Project
-Author-email: 
-Keywords: ka9q-radio sdr ham-radio radio-control
+Home-page: https://github.com/mijahauan/ka9q-python
+Author: Michael J. Hauan
+Author-email: "Michael J. Hauan" <ac0g@hauan.org>
+License-Expression: MIT
+Project-URL: Homepage, https://github.com/mijahauan/ka9q-python
+Project-URL: Documentation, https://github.com/mijahauan/ka9q-python/blob/main/README.md
+Project-URL: Repository, https://github.com/mijahauan/ka9q-python
+Project-URL: Issues, https://github.com/mijahauan/ka9q-python/issues
+Keywords: ka9q-radio,sdr,ham-radio,radio-control
 Classifier: Development Status :: 4 - Beta
 Classifier: Intended Audience :: Science/Research
 Classifier: Intended Audience :: Telecommunications Industry
-Classifier: License :: OSI Approved :: MIT License
 Classifier: Programming Language :: Python :: 3
 Classifier: Programming Language :: Python :: 3.9
 Classifier: Programming Language :: Python :: 3.10
@@ -19,8 +23,15 @@ Classifier: Topic :: Communications :: Ham Radio
 Classifier: Topic :: Scientific/Engineering
 Requires-Python: >=3.9
 Description-Content-Type: text/markdown
-Provides-Extra: dev
 License-File: LICENSE
+Requires-Dist: numpy>=1.24.0
+Provides-Extra: dev
+Requires-Dist: pytest>=7.0.0; extra == "dev"
+Requires-Dist: pytest-cov>=4.0.0; extra == "dev"
+Dynamic: author
+Dynamic: home-page
+Dynamic: license-file
+Dynamic: requires-python
 
 # ka9q-python
 
@@ -34,7 +45,7 @@ Control radiod channels for any application: AM/FM/SSB radio, WSPR monitoring, S
 ✅ **Complete API** - All 85+ radiod parameters exposed  
 ✅ **Channel control** - Create, configure, discover channels  
 ✅ **Pure Python** - No compiled dependencies  
-✅ **Well tested** - Used in production GRAPE recorder  
+✅ **Well tested** - Comprehensive test coverage  
 ✅ **Documented** - Comprehensive examples included  
 
 ## Installation
@@ -46,7 +57,7 @@ pip install ka9q
 Or install from source:
 
 ```bash
-git clone https://github.com/yourusername/ka9q-python.git
+git clone https://github.com/mijahauan/ka9q-python.git
 cd ka9q-python
 pip install -e .
 ```
@@ -111,6 +122,9 @@ for ssrc, info in channels.items():
 
 See `examples/` directory for complete applications:
 
+- **`discover_example.py`** - Channel discovery methods (native Python and control utility)
+- **`tune.py`** - Interactive channel tuning utility (Python implementation of ka9q-radio's tune)
+- **`tune_example.py`** - Programmatic examples of using the tune() method
 - **`simple_am_radio.py`** - Minimal AM broadcast listener
 - **`superdarn_recorder.py`** - Ionospheric radar monitoring
 - **`codar_oceanography.py`** - Ocean current radar
@@ -163,6 +177,30 @@ control.set_gain(ssrc=12345678, gain_db=20.0)
 control.set_shift_frequency(ssrc=12345678, shift_hz=800)
 ```
 
+#### tune()
+
+Tune a channel and retrieve its status (like the tune utility in ka9q-radio):
+
+```python
+# Tune a channel and get immediate status feedback
+status = control.tune(
+    ssrc=12345678,
+    frequency_hz=14.074e6,
+    preset="usb",
+    sample_rate=12000,
+    timeout=5.0
+)
+
+print(f"Frequency: {status['frequency']/1e6:.3f} MHz")
+print(f"SNR: {status['snr']:.1f} dB")
+```
+
+This method sends commands to radiod and waits for a status response, providing immediate confirmation of the channel state. Useful for:
+- Verifying channel configuration
+- Getting real-time signal quality metrics (SNR, power levels)
+- Interactive tuning applications
+- Debugging channel issues
+
 #### verify_channel()
 
 Check if channel exists:
@@ -176,14 +214,23 @@ if control.verify_channel(ssrc=12345678, expected_freq=14.074e6):
 
 #### discover_channels()
 
-Query existing channels:
+Query existing channels using native Python (no external dependencies):
 
 ```python
 from ka9q import discover_channels
 
+# Native Python discovery (default, listens for 2 seconds)
 channels = discover_channels("radiod.local")
 # Returns: {ssrc: ChannelInfo(...), ...}
+
+# Customize listen duration
+channels = discover_channels("radiod.local", listen_duration=5.0)
+
+# Force use of 'control' utility (requires ka9q-radio installed)
+channels = discover_channels("radiod.local", use_native=False)
 ```
+
+The native discovery method listens directly to radiod's status multicast stream and requires no external executables. It will automatically fall back to the `control` utility if native discovery fails or finds no channels.
 
 #### discover_radiod_services()
 
@@ -251,7 +298,7 @@ The API doesn't assume you're:
 - Using any specific sample rate
 - Monitoring any specific frequencies
 - Storing anything
-- Using GRAPE format
+- Using any particular data format
 
 **You specify everything.** This makes it reusable for any project.
 
@@ -269,15 +316,25 @@ Each module is independent and can be used separately.
 
 ## Requirements
 
+### Core Requirements
 - Python 3.9+
-- `avahi-utils` (for service discovery)
 - Running `radiod` instance on network
+
+### Optional Requirements (for enhanced functionality)
+- **mDNS tools** (for .local hostname resolution):
+  - Linux: `avahi-utils` package provides `avahi-resolve` and `avahi-browse`
+  - macOS: `dns-sd` (built-in) for hostname resolution
+  - Fallback: Python's `getaddrinfo` works everywhere
+- **ka9q-radio tools** (optional fallback):
+  - `control` utility for channel discovery (falls back to native Python)
+
+**Note**: The package works cross-platform without any external tools! They just provide optimization for mDNS resolution.
 
 ## Development
 
 ```bash
 # Clone
-git clone https://github.com/yourusername/ka9q-python.git
+git clone https://github.com/mijahauan/ka9q-python.git
 cd ka9q-python
 
 # Install dev dependencies
@@ -315,25 +372,27 @@ from ka9q import RadiodControl
 # Your application code here
 ```
 
-### Example: GRAPE Signal Recorder
+### Example: Application-Specific Wrapper
 
-The [GRAPE Signal Recorder](https://github.com/yourusername/signal-recorder) uses this library:
+You can create application-specific wrappers with your own defaults:
 
 ```python
 from ka9q import RadiodControl
 
-# GRAPE-specific wrapper adds defaults
-class GRAPEChannelManager:
+# Application-specific wrapper with custom defaults
+class MyChannelManager:
     def __init__(self, radiod_address):
         self.control = RadiodControl(radiod_address)
     
-    def create_grape_channel(self, frequency_mhz):
-        # GRAPE defaults: 16kHz IQ, no AGC
-        self.control.create_channel(
+    def create_my_channel(self, frequency_mhz, sample_rate=16000):
+        # Your application's defaults
+        self.control.create_and_configure_channel(
             ssrc=int(frequency_mhz * 1e6),
             frequency_hz=frequency_mhz * 1e6,
             preset="iq",
-            sample_rate=16000
+            sample_rate=sample_rate,
+            agc_enable=0,
+            gain=0.0
         )
 ```
 
@@ -353,12 +412,10 @@ MIT License - see LICENSE file
 ## Credits
 
 - Based on [ka9q-radio](https://github.com/ka9q/ka9q-radio) by Phil Karn KA9Q
-- Developed for [GRAPE Signal Recorder](https://github.com/yourusername/signal-recorder)
-- Contributors: [List]
+- Developed by Michael J. Hauan AC0G
 
 ## See Also
 
 - [ka9q-radio](https://github.com/ka9q/ka9q-radio) - The SDR software this controls
-- [GRAPE Signal Recorder](https://github.com/yourusername/signal-recorder) - HF recording system using this library
 - [SuperDARN](http://vt.superdarn.org/) - Ionospheric radar network
 - [CODAR](https://codaros.com/) - Ocean current radar systems

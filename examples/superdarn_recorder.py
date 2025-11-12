@@ -30,7 +30,7 @@ def create_superdarn_channels(control, frequency_list, bandwidth_hz=50000):
         
         print(f"Creating SuperDARN channel: {freq_hz/1e6:.3f} MHz...")
         
-        control.create_and_configure_channel(
+        control.create_channel(
             ssrc=ssrc,
             frequency_hz=freq_hz,
             preset="iq",              # I/Q needed for Doppler

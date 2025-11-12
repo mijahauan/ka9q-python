@@ -35,7 +35,7 @@ class HFScanner:
         print(f"Scanning {freq_hz/1e6:.3f} MHz ({mode})...")
         
         # Update channel to new frequency
-        self.control.create_and_configure_channel(
+        self.control.create_channel(
             ssrc=ssrc,
             frequency_hz=freq_hz,
             preset=mode,

@@ -15,6 +15,7 @@ import socket
 import struct
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
+from .utils import resolve_multicast_address
 
 logger = logging.getLogger(__name__)
 
@@ -29,72 +30,6 @@ class ChannelInfo:
     snr: float
     multicast_address: str
     port: int
-
-
-def _resolve_multicast_address(status_address: str) -> str:
-    """
-    Resolve a hostname or .local address to an IP for multicast.
-    
-    This is a lightweight version that doesn't require RadiodControl.
-    Tries multiple resolution methods for cross-platform compatibility.
-    
-    Args:
-        status_address: Hostname, .local name, or IP address
-        
-    Returns:
-        Resolved IP address as string
-    """
-    import re
-    
-    # If already an IP address, return it
-    if re.match(r'^\d+\.\d+\.\d+\.\d+$', status_address):
-        logger.debug(f"Address {status_address} is already an IP")
-        return status_address
-    
-    # Try avahi-resolve for .local addresses (Linux)
-    try:
-        result = subprocess.run(
-            ['avahi-resolve', '-n', status_address],
-            capture_output=True,
-            text=True,
-            timeout=2
-        )
-        if result.returncode == 0:
-            parts = result.stdout.strip().split()
-            if len(parts) >= 2:
-                logger.debug(f"Resolved {status_address} to {parts[1]} via avahi-resolve")
-                return parts[1]
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        pass
-    
-    # Try dns-sd for .local addresses (macOS)
-    try:
-        result = subprocess.run(
-            ['dns-sd', '-G', 'v4', status_address],
-            capture_output=True,
-            text=True,
-            timeout=2
-        )
-        if result.returncode == 0:
-            # Parse dns-sd output
-            for line in result.stdout.split('\n'):
-                if status_address in line and re.search(r'\d+\.\d+\.\d+\.\d+', line):
-                    match = re.search(r'(\d+\.\d+\.\d+\.\d+)', line)
-                    if match:
-                        addr = match.group(1)
-                        logger.debug(f"Resolved {status_address} to {addr} via dns-sd")
-                        return addr
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        pass
-    
-    # Fallback to getaddrinfo (works everywhere)
-    try:
-        addr_info = socket.getaddrinfo(status_address, None, socket.AF_INET, socket.SOCK_DGRAM)
-        addr = addr_info[0][4][0]
-        logger.debug(f"Resolved {status_address} to {addr} via getaddrinfo")
-        return addr
-    except Exception as e:
-        raise ConnectionError(f"Failed to resolve {status_address}: {e}")
 
 
 def _create_status_listener_socket(multicast_addr: str) -> socket.socket:
@@ -168,7 +103,7 @@ def discover_channels_native(status_address: str, listen_duration: float = 2.0) 
     
     try:
         # Resolve address and create lightweight socket (no RadiodControl overhead)
-        multicast_addr = _resolve_multicast_address(status_address)
+        multicast_addr = resolve_multicast_address(status_address, timeout=2.0)
         status_sock = _create_status_listener_socket(multicast_addr)
         
         # Create temporary RadiodControl just to access decoder

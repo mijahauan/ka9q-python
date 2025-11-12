@@ -55,7 +55,7 @@ class TestNativeDiscovery(unittest.TestCase):
         self.assertEqual(channel.multicast_address, "239.1.2.3")
         self.assertEqual(channel.port, 5004)
     
-    @patch('ka9q.discovery.RadiodControl')
+    @patch('ka9q.control.RadiodControl')
     def test_native_discovery_no_packets(self, mock_control_class):
         """Test native discovery when no packets are received"""
         # Mock RadiodControl instance
@@ -77,7 +77,7 @@ class TestNativeDiscovery(unittest.TestCase):
         mock_socket.close.assert_called_once()
         mock_control.close.assert_called_once()
     
-    @patch('ka9q.discovery.RadiodControl')
+    @patch('ka9q.control.RadiodControl')
     @patch('ka9q.discovery.select.select')
     def test_native_discovery_with_valid_packet(self, mock_select, mock_control_class):
         """Test native discovery with a valid status packet"""
@@ -130,7 +130,7 @@ class TestNativeDiscovery(unittest.TestCase):
         self.assertEqual(channel.sample_rate, 12000)
         self.assertAlmostEqual(channel.snr, 12.5)
     
-    @patch('ka9q.discovery.RadiodControl')
+    @patch('ka9q.control.RadiodControl')
     @patch('ka9q.discovery.select.select')
     def test_native_discovery_skips_non_status_packets(self, mock_select, mock_control_class):
         """Test that non-status packets are skipped"""

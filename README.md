@@ -351,7 +351,7 @@ class MyChannelManager:
     
     def create_my_channel(self, frequency_mhz, sample_rate=16000):
         # Your application's defaults
-        self.control.create_and_configure_channel(
+        self.control.create_channel(
             ssrc=int(frequency_mhz * 1e6),
             frequency_hz=frequency_mhz * 1e6,
             preset="iq",
@@ -378,6 +378,12 @@ MIT License - see LICENSE file
 
 - Based on [ka9q-radio](https://github.com/ka9q/ka9q-radio) by Phil Karn KA9Q
 - Developed by Michael J. Hauan AC0G
+
+## Documentation
+
+- **[API Reference](API_REFERENCE.md)** - Complete API documentation with all parameters and examples
+- **[Architecture](ARCHITECTURE.md)** - Internal design, protocol details, threading model
+- **[Installation Guide](INSTALLATION.md)** - Detailed installation instructions
 
 ## See Also
 

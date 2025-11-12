@@ -37,7 +37,7 @@ def create_codar_channels(control, site_config):
         
         print(f"  Creating {freq_hz/1e6:.3f} MHz channel...")
         
-        control.create_and_configure_channel(
+        control.create_channel(
             ssrc=ssrc,
             frequency_hz=freq_hz,
             preset="iq",              # I/Q for FMCW processing

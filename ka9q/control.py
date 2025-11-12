@@ -24,10 +24,12 @@ import socket
 import struct
 import random
 import logging
+import threading
 from typing import Optional
 from .types import StatusType, CMD
 from .discovery import discover_channels
-from .exceptions import ConnectionError, CommandError
+from .exceptions import ConnectionError, CommandError, ValidationError
+from .utils import resolve_multicast_address
 
 logger = logging.getLogger(__name__)
 
@@ -36,13 +38,75 @@ logger = logging.getLogger(__name__)
 CMD = 1
 
 
+# Input validation functions
+def _validate_ssrc(ssrc: int) -> None:
+    """Validate SSRC fits in 32-bit unsigned integer"""
+    if not isinstance(ssrc, int):
+        raise ValidationError(f"SSRC must be an integer, got {type(ssrc).__name__}")
+    if not (0 <= ssrc <= 0xFFFFFFFF):
+        raise ValidationError(f"Invalid SSRC: {ssrc} (must be 0-4294967295)")
+
+
+def _validate_frequency(freq_hz: float) -> None:
+    """Validate frequency is within reasonable SDR range"""
+    if not isinstance(freq_hz, (int, float)):
+        raise ValidationError(f"Frequency must be a number, got {type(freq_hz).__name__}")
+    if not (0 < freq_hz < 10e12):  # 10 THz max
+        raise ValidationError(f"Invalid frequency: {freq_hz} Hz (must be 0 < freq < 10 THz)")
+
+
+def _validate_sample_rate(rate: int) -> None:
+    """Validate sample rate is positive and reasonable"""
+    if not isinstance(rate, int):
+        raise ValidationError(f"Sample rate must be an integer, got {type(rate).__name__}")
+    if not (1 <= rate <= 100e6):  # 100 MHz max
+        raise ValidationError(f"Invalid sample rate: {rate} Hz (must be 1-100000000)")
+
+
+def _validate_timeout(timeout: float) -> None:
+    """Validate timeout is positive"""
+    if not isinstance(timeout, (int, float)):
+        raise ValidationError(f"Timeout must be a number, got {type(timeout).__name__}")
+    if timeout <= 0:
+        raise ValidationError(f"Timeout must be positive, got {timeout}")
+
+
+def _validate_gain(gain_db: float) -> None:
+    """Validate gain is within reasonable range"""
+    if not isinstance(gain_db, (int, float)):
+        raise ValidationError(f"Gain must be a number, got {type(gain_db).__name__}")
+    if not (-100 <= gain_db <= 100):  # Reasonable range for most SDRs
+        raise ValidationError(f"Invalid gain: {gain_db} dB (must be -100 to +100)")
+
+
+def _validate_positive(value: float, name: str) -> None:
+    """Validate that a value is positive"""
+    if not isinstance(value, (int, float)):
+        raise ValidationError(f"{name} must be a number, got {type(value).__name__}")
+    if value <= 0:
+        raise ValidationError(f"{name} must be positive, got {value}")
+
+
 def encode_int64(buf: bytearray, type_val: int, x: int) -> int:
     """
     Encode a 64-bit integer in TLV format
     
     Format: [type:1][length:1][value:variable]
     Value is big-endian, with leading zeros compressed
+    
+    Args:
+        buf: Buffer to write to
+        type_val: TLV type identifier
+        x: Integer value (must be 0 <= x <= 2^64-1)
+        
+    Raises:
+        ValidationError: If x is negative or too large
     """
+    if x < 0:
+        raise ValidationError(f"Cannot encode negative integer: {x}")
+    if x >= 2**64:
+        raise ValidationError(f"Integer too large for 64-bit encoding: {x}")
+    
     buf.append(type_val)
     
     if x == 0:
@@ -67,15 +131,42 @@ def encode_int64(buf: bytearray, type_val: int, x: int) -> int:
 
 
 def encode_int(buf: bytearray, type_val: int, x: int) -> int:
-    """Encode an integer"""
+    """
+    Encode an integer in TLV format (alias for encode_int64)
+    
+    Args:
+        buf: Buffer to write to
+        type_val: TLV type identifier
+        x: Integer value (must be 0 <= x <= 2^64-1)
+        
+    Returns:
+        Number of bytes written (2 + value length)
+        
+    Raises:
+        ValidationError: If x is negative or too large
+    """
     return encode_int64(buf, type_val, x)
 
 
 def encode_double(buf: bytearray, type_val: int, x: float) -> int:
     """
-    Encode a double (float64) in TLV format
+    Encode a double-precision float (float64) in TLV format
     
-    The float is converted to its IEEE 754 representation and encoded as int64
+    Converts the float to IEEE 754 double-precision format, then encodes
+    it as a 64-bit integer in TLV format.
+    
+    Args:
+        buf: Buffer to write to
+        type_val: TLV type identifier
+        x: Float value to encode
+        
+    Returns:
+        Number of bytes written (2 + value length)
+        
+    Example:
+        >>> buf = bytearray()
+        >>> encode_double(buf, StatusType.RADIO_FREQUENCY, 14.074e6)
+        10
     """
     # Pack as double, unpack as uint64
     packed = struct.pack('>d', x)  # big-endian double
@@ -85,7 +176,22 @@ def encode_double(buf: bytearray, type_val: int, x: float) -> int:
 
 def encode_float(buf: bytearray, type_val: int, x: float) -> int:
     """
-    Encode a float (float32) in TLV format
+    Encode a single-precision float (float32) in TLV format
+    
+    Converts the float to IEEE 754 single-precision format, then encodes
+    it as a 32-bit integer in TLV format.
+    
+    Args:
+        buf: Buffer to write to
+        type_val: TLV type identifier
+        x: Float value to encode
+        
+    Returns:
+        Number of bytes written (2 + value length)
+        
+    Note:
+        Single-precision floats have less precision than doubles.
+        Use encode_double() for better precision when needed.
     """
     # Pack as float, unpack as uint32
     packed = struct.pack('>f', x)  # big-endian float
@@ -95,7 +201,27 @@ def encode_float(buf: bytearray, type_val: int, x: float) -> int:
 
 def encode_string(buf: bytearray, type_val: int, s: str) -> int:
     """
-    Encode a string in TLV format
+    Encode a UTF-8 string in TLV format
+    
+    Strings are encoded with variable-length encoding:
+    - Length < 128: single-byte length
+    - Length >= 128: multi-byte length (0x80 | high_byte, low_byte)
+    
+    Args:
+        buf: Buffer to write to
+        type_val: TLV type identifier
+        s: String to encode (will be converted to UTF-8)
+        
+    Returns:
+        Number of bytes written (2 + string length)
+        
+    Raises:
+        ValueError: If string is longer than 65535 bytes
+        
+    Example:
+        >>> buf = bytearray()
+        >>> encode_string(buf, StatusType.PRESET, "usb")
+        5
     """
     buf.append(type_val)
     
@@ -116,7 +242,18 @@ def encode_string(buf: bytearray, type_val: int, s: str) -> int:
 
 
 def encode_eol(buf: bytearray) -> int:
-    """Encode end-of-list marker"""
+    """
+    Encode end-of-list marker
+    
+    Every TLV command must end with an EOL marker to signal
+    the end of the parameter list.
+    
+    Args:
+        buf: Buffer to write to
+        
+    Returns:
+        Number of bytes written (always 1)
+    """
     buf.append(StatusType.EOL)
     return 1
 
@@ -144,7 +281,16 @@ def decode_int(data: bytes, length: int) -> int:
 
 
 def decode_int32(data: bytes, length: int) -> int:
-    """Decode a 32-bit integer"""
+    """
+    Decode a 32-bit integer from TLV response (alias for decode_int)
+    
+    Args:
+        data: Bytes to decode (variable length, big-endian)
+        length: Number of bytes
+        
+    Returns:
+        Integer value
+    """
     return decode_int(data, length)
 
 
@@ -181,7 +327,16 @@ def decode_double(data: bytes, length: int) -> float:
 
 
 def decode_bool(data: bytes, length: int) -> bool:
-    """Decode a boolean value"""
+    """
+    Decode a boolean value from TLV response
+    
+    Args:
+        data: Bytes to decode
+        length: Number of bytes
+        
+    Returns:
+        True if non-zero, False if zero
+    """
     return decode_int(data, length) != 0
 
 
@@ -254,71 +409,26 @@ class RadiodControl:
         self.socket = None
         self._status_sock = None  # Cached status listener socket for tune()
         self._status_sock_lock = None  # Will be initialized when needed
+        self._socket_lock = threading.RLock()  # Protect control socket operations
         self._connect()
+    
+    def __enter__(self):
+        """Context manager entry"""
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit - ensure cleanup"""
+        try:
+            self.close()
+        except Exception as e:
+            logger.warning(f"Error during cleanup in context manager: {e}")
+        return False  # Don't suppress exceptions
     
     def _connect(self):
         """Connect to radiod control socket"""
-        # Resolve the status address
-        import subprocess
-        import re
-        
         try:
-            # Check if it's already an IP address
-            if re.match(r'^\d+\.\d+\.\d+\.\d+$', self.status_address):
-                mcast_addr = self.status_address
-                logger.info(f"Using direct IP address: {mcast_addr}")
-            else:
-                # Try platform-specific mDNS resolution first, then fall back to getaddrinfo
-                mcast_addr = None
-                
-                # Try avahi-resolve (Linux)
-                try:
-                    result = subprocess.run(
-                        ['avahi-resolve', '-n', self.status_address],
-                        capture_output=True,
-                        text=True,
-                        timeout=5
-                    )
-                    
-                    if result.returncode == 0:
-                        # Parse output: "hostname    ip_address"
-                        parts = result.stdout.strip().split()
-                        if len(parts) >= 2:
-                            mcast_addr = parts[1]
-                            logger.debug(f"Resolved via avahi-resolve: {mcast_addr}")
-                except (subprocess.TimeoutExpired, FileNotFoundError, ValueError) as e:
-                    logger.debug(f"avahi-resolve not available: {e}")
-                
-                # Try dns-sd (macOS) if avahi didn't work
-                if not mcast_addr:
-                    try:
-                        result = subprocess.run(
-                            ['dns-sd', '-G', 'v4', self.status_address],
-                            capture_output=True,
-                            text=True,
-                            timeout=5
-                        )
-                        
-                        if result.returncode == 0:
-                            # Parse output to find IP address
-                            for line in result.stdout.split('\n'):
-                                if self.status_address in line and 'can be reached' in line:
-                                    # Example: "Timestamp  A/AAAA/AAAA (ipv6) ...can be reached at 239.251.200.193"
-                                    parts = line.split()
-                                    if len(parts) > 0:
-                                        mcast_addr = parts[-1]
-                                        logger.debug(f"Resolved via dns-sd: {mcast_addr}")
-                                        break
-                    except (subprocess.TimeoutExpired, FileNotFoundError, ValueError) as e:
-                        logger.debug(f"dns-sd not available: {e}")
-                
-                # Final fallback: Python's getaddrinfo (works everywhere)
-                if not mcast_addr:
-                    logger.debug("Falling back to getaddrinfo")
-                    import socket as sock
-                    addr_info = sock.getaddrinfo(self.status_address, None, sock.AF_INET, sock.SOCK_DGRAM)
-                    mcast_addr = addr_info[0][4][0]
-                    logger.debug(f"Resolved via getaddrinfo: {mcast_addr}")
+            # Resolve the status address using shared utility
+            mcast_addr = resolve_multicast_address(self.status_address, timeout=5.0)
             
             # Create UDP socket
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -362,26 +472,69 @@ class RadiodControl:
             logger.debug(f"Status multicast: {self.status_mcast_addr}, Control: {self.dest_addr}")
             logger.debug(f"Socket options: REUSEADDR=1, MULTICAST_IF=INADDR_ANY, MULTICAST_LOOP=1, MULTICAST_TTL=2")
             
+        except socket.error as e:
+            logger.error(f"Socket error connecting to radiod: {e}")
+            raise ConnectionError(f"Failed to create socket: {e}") from e
+        except subprocess.TimeoutExpired as e:
+            logger.error(f"Timeout resolving address: {e}")
+            raise ConnectionError(f"Address resolution timeout: {e}") from e
+        except FileNotFoundError as e:
+            # mDNS tools not found, but getaddrinfo should work
+            logger.debug(f"mDNS tools not available: {e}")
+            raise ConnectionError(f"Cannot resolve address (mDNS tools unavailable): {e}") from e
         except Exception as e:
-            logger.error(f"Failed to connect to radiod: {e}")
-            raise
+            logger.error(f"Unexpected error connecting to radiod: {e}", exc_info=True)
+            raise ConnectionError(f"Failed to connect to radiod: {e}") from e
     
-    def send_command(self, cmdbuffer: bytearray):
-        """Send a command packet to radiod"""
-        if not self.socket:
-            raise RuntimeError("Not connected to radiod")
+    def send_command(self, cmdbuffer: bytearray, max_retries: int = 3, retry_delay: float = 0.1):
+        """
+        Send a command packet to radiod with retry logic (thread-safe)
         
-        try:
-            # Log hex dump of the command
-            hex_dump = ' '.join(f'{b:02x}' for b in cmdbuffer)
-            logger.debug(f"Sending {len(cmdbuffer)} bytes to {self.dest_addr}: {hex_dump}")
+        Args:
+            cmdbuffer: Command buffer to send
+            max_retries: Maximum number of retry attempts (default: 3)
+            retry_delay: Initial delay between retries in seconds (default: 0.1)
+                        Uses exponential backoff: 0.1s, 0.2s, 0.4s, etc.
+        
+        Raises:
+            RuntimeError: If not connected to radiod
+            CommandError: If sending fails after all retries
+        """
+        import time
+        
+        with self._socket_lock:
+            if not self.socket:
+                raise RuntimeError("Not connected to radiod")
             
-            sent = self.socket.sendto(bytes(cmdbuffer), self.dest_addr)
-            logger.debug(f"Sent {sent} bytes to radiod")
-            return sent
-        except Exception as e:
-            logger.error(f"Failed to send command: {e}")
-            raise
+            last_error = None
+            for attempt in range(max_retries):
+                try:
+                    # Log hex dump of the command
+                    hex_dump = ' '.join(f'{b:02x}' for b in cmdbuffer)
+                    logger.debug(f"Sending {len(cmdbuffer)} bytes to {self.dest_addr} (attempt {attempt+1}/{max_retries}): {hex_dump}")
+                    
+                    sent = self.socket.sendto(bytes(cmdbuffer), self.dest_addr)
+                    logger.debug(f"Sent {sent} bytes to radiod")
+                    return sent
+                    
+                except socket.error as e:
+                    last_error = e
+                    if attempt < max_retries - 1:
+                        # Exponential backoff
+                        delay = retry_delay * (2 ** attempt)
+                        logger.warning(f"Socket error on attempt {attempt+1}/{max_retries}: {e}. Retrying in {delay:.2f}s...")
+                        time.sleep(delay)
+                    else:
+                        logger.error(f"Socket error sending command after {max_retries} attempts: {e}")
+                        raise CommandError(f"Failed to send command after {max_retries} attempts: {e}") from e
+                        
+                except Exception as e:
+                    logger.error(f"Unexpected error sending command: {e}", exc_info=True)
+                    raise CommandError(f"Failed to send command: {e}") from e
+            
+            # Should not reach here, but just in case
+            if last_error:
+                raise CommandError(f"Failed to send command after {max_retries} attempts: {last_error}") from last_error
     
     def set_frequency(self, ssrc: int, frequency_hz: float):
         """
@@ -390,7 +543,13 @@ class RadiodControl:
         Args:
             ssrc: SSRC of the channel
             frequency_hz: Frequency in Hz
+        
+        Raises:
+            ValidationError: If parameters are invalid
         """
+        _validate_ssrc(ssrc)
+        _validate_frequency(frequency_hz)
+        
         cmdbuffer = bytearray()
         cmdbuffer.append(CMD)  # Command packet type
         
@@ -428,7 +587,13 @@ class RadiodControl:
         Args:
             ssrc: SSRC of the channel
             sample_rate: Sample rate in Hz
+        
+        Raises:
+            ValidationError: If parameters are invalid
         """
+        _validate_ssrc(ssrc)
+        _validate_sample_rate(sample_rate)
+        
         cmdbuffer = bytearray()
         cmdbuffer.append(CMD)
         
@@ -481,7 +646,13 @@ class RadiodControl:
         Args:
             ssrc: SSRC of the channel
             gain_db: Gain in dB
+        
+        Raises:
+            ValidationError: If parameters are invalid
         """
+        _validate_ssrc(ssrc)
+        _validate_gain(gain_db)
+        
         cmdbuffer = bytearray()
         cmdbuffer.append(CMD)
         
@@ -559,24 +730,50 @@ class RadiodControl:
         logger.info(f"Setting output level for SSRC {ssrc} to {level}")
         self.send_command(cmdbuffer)
     
-    def create_and_configure_channel(self, ssrc: int, frequency_hz: float, 
-                                     preset: str = "iq", sample_rate: Optional[int] = None,
-                                     agc_enable: int = 0, gain: float = 0.0):
+    def create_channel(self, ssrc: int, frequency_hz: float, 
+                       preset: str = "iq", sample_rate: Optional[int] = None,
+                       agc_enable: int = 0, gain: float = 0.0):
         """
-        Create a new channel and configure it
+        Create and configure a new radiod channel
         
-        This sends ALL parameters in a SINGLE packet to radiod.
-        This is critical because radiod creates the channel when it receives
-        the first command for a new SSRC, using the parameters in that packet.
+        This sends all parameters in a single packet to radiod, which creates
+        the channel when it receives the first command for a new SSRC.
         
         Args:
-            ssrc: SSRC for the new channel
-            frequency_hz: Frequency in Hz
-            preset: Demod type (default: "iq" = linear mode)
-            sample_rate: Sample rate in Hz (optional)
-            agc_enable: AGC enable (0=off, 1=on) (default: 0)
-            gain: Manual gain setting in dB (default: 0.0)
+            ssrc: Channel identifier (0 to 4294967295). Convention is to use
+                  frequency in Hz as SSRC (e.g., 14074000 for 14.074 MHz)
+            frequency_hz: RF frequency in Hz (typically 0 to 6 GHz for HF/VHF/UHF,
+                         depends on your SDR hardware)
+            preset: Demodulation mode (default: "iq" for linear/IQ mode)
+                    Common values: "iq", "usb", "lsb", "am", "fm", "cw"
+            sample_rate: Output sample rate in Hz (optional, radiod uses default if None)
+                        Typical values: 12000, 48000, 16000
+            agc_enable: Automatic Gain Control (0=disabled/manual gain, 1=enabled)
+                       Default: 0 (manual gain mode)
+            gain: Manual gain in dB, used when agc_enable=0 (default: 0.0)
+                  Typical range: -60 to +60 dB
+        
+        Raises:
+            ValidationError: If parameters are out of valid ranges
+            CommandError: If command fails to send
+            RuntimeError: If not connected to radiod
+        
+        Example:
+            >>> control = RadiodControl("radiod.local")
+            >>> control.create_channel(
+            ...     ssrc=14074000,
+            ...     frequency_hz=14.074e6,
+            ...     preset="usb",
+            ...     sample_rate=12000
+            ... )
         """
+        # Validate inputs
+        _validate_ssrc(ssrc)
+        _validate_frequency(frequency_hz)
+        if sample_rate is not None:
+            _validate_sample_rate(sample_rate)
+        _validate_gain(gain)
+        
         logger.info(f"Creating channel: SSRC={ssrc}, freq={frequency_hz/1e6:.3f} MHz, "
                    f"demod={preset}, rate={sample_rate}Hz, agc={agc_enable}, gain={gain}dB")
         
@@ -766,6 +963,16 @@ class RadiodControl:
         Raises:
             TimeoutError: If no matching response received within timeout
         """
+        # Validate inputs
+        _validate_ssrc(ssrc)
+        if frequency_hz is not None:
+            _validate_frequency(frequency_hz)
+        if sample_rate is not None:
+            _validate_sample_rate(sample_rate)
+        if gain is not None:
+            _validate_gain(gain)
+        _validate_timeout(timeout)
+        
         import time
         import select
         
@@ -987,14 +1194,34 @@ class RadiodControl:
         return status
     
     def close(self):
-        """Close all sockets (control and status listener)"""
-        if self.socket:
-            self.socket.close()
-            self.socket = None
+        """
+        Close all sockets with proper error handling
         
-        # Close cached status listener socket if it exists
+        This method is safe to call multiple times and handles errors gracefully.
+        """
+        errors = []
+        
+        # Close control socket
+        if self.socket:
+            try:
+                self.socket.close()
+                logger.debug("Control socket closed")
+            except Exception as e:
+                errors.append(f"control socket: {e}")
+            finally:
+                self.socket = None
+        
+        # Close cached status listener socket
         if self._status_sock:
-            logger.debug("Closing cached status listener socket")
-            self._status_sock.close()
-            self._status_sock = None
+            try:
+                logger.debug("Closing cached status listener socket")
+                self._status_sock.close()
+            except Exception as e:
+                errors.append(f"status socket: {e}")
+            finally:
+                self._status_sock = None
+        
+        if errors:
+            error_msg = "; ".join(errors)
+            logger.warning(f"Errors during socket cleanup: {error_msg}")
 

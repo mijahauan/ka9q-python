@@ -15,7 +15,7 @@ def main():
     # Create AM channel for WWV 10 MHz
     ssrc = 10000000  # Use frequency as SSRC (convention)
     
-    control.create_and_configure_channel(
+    control.create_channel(
         ssrc=ssrc,
         frequency_hz=10.0e6,    # 10 MHz
         preset="am",            # AM demodulation

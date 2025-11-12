@@ -57,8 +57,8 @@ def test_encode_decode_float():
         
         decoded = decode_float(data, length)
         
-        # Float comparison with tolerance
-        assert abs(decoded - val) < 1e-6, f"Mismatch: encoded {val}, decoded {decoded}"
+        # Float comparison with tolerance (1e-5 for single-precision IEEE 754)
+        assert abs(decoded - val) < 1e-5, f"Mismatch: encoded {val}, decoded {decoded}"
         print(f"  ✓ {val} -> {decoded}")
     
     print("  All float tests passed!\n")

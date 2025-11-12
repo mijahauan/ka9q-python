@@ -8,13 +8,14 @@ listening to SuperDARN radar monitoring.
 Basic usage:
     from ka9q import RadiodControl
     
-    control = RadiodControl("radiod.local")
-    control.create_channel(
-        ssrc=10000000,
-        frequency_hz=10.0e6,
-        preset="am",
-        sample_rate=12000
-    )
+    # Use context manager for automatic cleanup
+    with RadiodControl("radiod.local") as control:
+        control.create_channel(
+            ssrc=10000000,
+            frequency_hz=10.0e6,
+            preset="am",
+            sample_rate=12000
+        )
 """
 
 __version__ = '2.0.0'
@@ -29,7 +30,7 @@ from .discovery import (
     ChannelInfo
 )
 from .types import StatusType, Encoding
-from .exceptions import Ka9qError, ConnectionError, CommandError
+from .exceptions import Ka9qError, ConnectionError, CommandError, ValidationError
 
 __all__ = [
     'RadiodControl',
@@ -43,4 +44,5 @@ __all__ = [
     'Ka9qError',
     'ConnectionError',
     'CommandError',
+    'ValidationError',
 ]
