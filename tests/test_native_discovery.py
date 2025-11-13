@@ -56,15 +56,22 @@ class TestNativeDiscovery(unittest.TestCase):
         self.assertEqual(channel.port, 5004)
     
     @patch('ka9q.control.RadiodControl')
-    def test_native_discovery_no_packets(self, mock_control_class):
+    @patch('ka9q.discovery.resolve_multicast_address')
+    @patch('ka9q.discovery._create_status_listener_socket')
+    def test_native_discovery_no_packets(self, mock_create_socket, mock_resolve, mock_control_class):
         """Test native discovery when no packets are received"""
-        # Mock RadiodControl instance
-        mock_control = MagicMock()
-        mock_control_class.return_value = mock_control
+        # Mock address resolution
+        mock_resolve.return_value = "239.1.2.3"
         
         # Mock socket that returns no data (times out)
         mock_socket = MagicMock()
-        mock_control._setup_status_listener.return_value = mock_socket
+        mock_create_socket.return_value = mock_socket
+        
+        # Mock RadiodControl - configure __new__ to return our mock
+        mock_control = MagicMock()
+        mock_control.status_mcast_addr = "239.1.2.3"
+        mock_control._decode_status_response = MagicMock(return_value={})
+        mock_control_class.__new__.return_value = mock_control
         
         # Mock select to always return no data
         with patch('ka9q.discovery.select.select', return_value=([], [], [])):
@@ -75,19 +82,22 @@ class TestNativeDiscovery(unittest.TestCase):
         
         # Verify cleanup
         mock_socket.close.assert_called_once()
-        mock_control.close.assert_called_once()
     
-    @patch('ka9q.control.RadiodControl')
+    @patch('ka9q.discovery.resolve_multicast_address')
+    @patch('ka9q.discovery._create_status_listener_socket')
     @patch('ka9q.discovery.select.select')
-    def test_native_discovery_with_valid_packet(self, mock_select, mock_control_class):
+    def test_native_discovery_with_valid_packet(self, mock_select, mock_create_socket, mock_resolve):
         """Test native discovery with a valid status packet"""
-        # Mock RadiodControl instance
-        mock_control = MagicMock()
-        mock_control_class.return_value = mock_control
+        # Mock address resolution
+        mock_resolve.return_value = "239.1.2.3"
         
         # Mock socket
         mock_socket = MagicMock()
-        mock_control._setup_status_listener.return_value = mock_socket
+        mock_create_socket.return_value = mock_socket
+        
+        # Use real RadiodControl but intercept decode
+        from ka9q.control import RadiodControl
+        original_decode = RadiodControl._decode_status_response
         
         # Create a mock status packet
         status_dict = {
@@ -98,8 +108,6 @@ class TestNativeDiscovery(unittest.TestCase):
             'snr': 12.5,
             'destination': {'address': '239.1.2.3', 'port': 5004}
         }
-        
-        mock_control._decode_status_response.return_value = status_dict
         
         # Mock socket.recvfrom to return a status packet (type=0)
         mock_packet = b'\x00' + b'\x00' * 50  # Status packet (type 0)
@@ -117,8 +125,11 @@ class TestNativeDiscovery(unittest.TestCase):
         mock_select.side_effect = mock_select_side_effect
         
         # Run discovery with short duration
-        with patch('ka9q.discovery.time.time', side_effect=[0, 0.1, 1.0]):
-            channels = discover_channels_native("test.local", listen_duration=0.5)
+        # Mock time to control loop - need enough values for all time.time() calls
+        time_values = [0.0, 0.1, 0.2, 1.0, 1.0, 1.0, 1.0]  # Enough for loop + logging
+        with patch.object(RadiodControl, '_decode_status_response', return_value=status_dict):
+            with patch('ka9q.discovery.time.time', side_effect=time_values):
+                channels = discover_channels_native("test.local", listen_duration=0.5)
         
         # Should find one channel
         self.assertEqual(len(channels), 1)

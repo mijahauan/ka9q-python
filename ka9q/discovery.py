@@ -99,7 +99,8 @@ def discover_channels_native(status_address: str, listen_duration: float = 2.0) 
     logger.info(f"Listening for {listen_duration} seconds...")
     
     channels = {}
-    status_sock = None
+    status_sock = None  # Initialize outside try block
+    temp_control = None  # Initialize outside try block
     
     try:
         # Resolve address and create lightweight socket (no RadiodControl overhead)
@@ -184,9 +185,13 @@ def discover_channels_native(status_address: str, listen_duration: float = 2.0) 
         logger.debug(f"Exception details:", exc_info=True)
     
     finally:
-        # Clean up socket
+        # Clean up socket with error handling
         if status_sock:
-            status_sock.close()
+            try:
+                status_sock.close()
+                logger.debug("Discovery socket closed successfully")
+            except Exception as e:
+                logger.warning(f"Error closing discovery socket: {e}")
     
     return channels
 

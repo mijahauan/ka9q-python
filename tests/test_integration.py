@@ -66,7 +66,8 @@ class TestIntegrationBasic:
     
     def test_control_socket_exists(self, control):
         """Test that control socket is set up"""
-        assert hasattr(control, 'control_sock')
+        assert hasattr(control, 'socket')
+        assert control.socket is not None
         print(f"\n✓ Control socket configured")
 
 

@@ -121,6 +121,37 @@ control.create_channel(
 )
 ```
 
+#### remove_channel()
+
+Remove a channel when done (important for cleanup):
+
+```python
+control.remove_channel(ssrc=12345678)
+```
+
+**⚠️ Important**: Always remove channels when your application is done with them. Radiod doesn't automatically clean up unused channels, so long-running applications should explicitly remove temporary channels to prevent accumulation.
+
+**Note**: Removal is not instantaneous. Setting frequency to 0 marks the channel for removal, and radiod periodically polls to remove marked channels. The channel may still appear in discovery for a brief time after calling `remove_channel()`.
+
+**Best Practice** - Use context manager or try/finally:
+
+```python
+# Pattern 1: Context manager (automatic cleanup)
+with RadiodControl("radiod.local") as control:
+    control.create_channel(ssrc=14074000, frequency_hz=14.074e6, preset="usb")
+    # ... use channel ...
+    control.remove_channel(ssrc=14074000)
+
+# Pattern 2: Try/finally (manual cleanup)
+control = RadiodControl("radiod.local")
+try:
+    control.create_channel(ssrc=14074000, frequency_hz=14.074e6, preset="usb")
+    # ... use channel ...
+finally:
+    control.remove_channel(ssrc=14074000)
+    control.close()
+```
+
 #### Granular Setters
 
 Fine-tune individual parameters:
@@ -294,6 +325,105 @@ Each module is independent and can be used separately.
   - `control` utility for channel discovery (falls back to native Python)
 
 **Note**: The package works cross-platform without any external tools! They just provide optimization for mDNS resolution.
+
+## Security Considerations
+
+⚠️ **IMPORTANT**: ka9q-radio uses an **unauthenticated UDP multicast protocol** for control commands.
+
+### Threat Model
+
+The ka9q-radio protocol does NOT include:
+- ❌ Authentication - Anyone on the network can send commands
+- ❌ Encryption - All traffic is plaintext
+- ❌ Authorization - No access control lists
+- ❌ Audit logging - No built-in command tracking
+
+### Possible Attacks
+
+If radiod is exposed to untrusted networks, attackers can:
+- **Command Injection**: Send arbitrary commands to your radiod instance
+- **Denial of Service**: Flood with commands, delete channels, cause crashes
+- **Eavesdropping**: Monitor what frequencies you're tuning to
+- **Frequency Hijacking**: Force channels to unintended frequencies
+
+### Recommended Deployment
+
+✅ **Suitable Environments**:
+- Private LANs behind firewalls (home networks, labs)
+- Isolated network segments (VLANs, Docker networks)
+- VPN-only access for remote users
+- Amateur radio operations on trusted networks
+
+❌ **NOT Suitable For**:
+- Public internet exposure
+- Multi-tenant cloud environments
+- Untrusted networks (public WiFi, university networks, etc.)
+- Security-critical or compliance-regulated applications
+
+### Security Checklist
+
+Before deploying in production:
+
+- [ ] **Network Isolation**: Radiod is on isolated network segment
+- [ ] **Firewall Rules**: Block UDP port 5006 from untrusted sources
+- [ ] **No Public Exposure**: Radiod NOT accessible from internet
+- [ ] **VPN for Remote Access**: Use WireGuard/OpenVPN, not port forwarding
+- [ ] **Monitoring**: Log unusual command patterns
+- [ ] **Physical Security**: Control access to network infrastructure
+
+### Secure Deployment Patterns
+
+**Pattern 1: Isolated Home Network** (Recommended for Amateur Radio)
+```
+[Internet] <-> [Router/Firewall] <-> [Private 192.168.x.x Network]
+                                       └─ radiod (no internet access)
+                                       └─ Control applications
+```
+
+**Pattern 2: VPN Access** (For Remote Operation)
+```
+[Remote User] -> [VPN Tunnel] -> [Private Network with radiod]
+```
+
+**Pattern 3: Docker Isolation** (For Development/Testing)
+```bash
+# Run radiod in isolated Docker network
+docker network create --internal radiod-net
+docker run --network=radiod-net radiod
+```
+
+### What ka9q-python Does for Security
+
+✅ **Input Validation**: All parameters validated before transmission
+- SSRC range checking (0-4294967295)
+- Frequency validation (prevents invalid values)
+- String sanitization (rejects control characters, null bytes)
+- Parameter bounds checking
+
+✅ **Rate Limiting**: Prevents command flooding (default: 100 commands/sec)
+
+✅ **Secure Random**: Uses `secrets` module for command tags (prevents prediction)
+
+✅ **Error Handling**: Comprehensive validation prevents malformed packets
+
+### For FCC-Regulated / Commercial Use
+
+If you're using this for:
+- **FCC-licensed operations**: Ensure unauthorized frequency changes are prevented via network isolation
+- **Research/Government**: Authentication may be required by policy (not provided by protocol)
+- **Commercial Products**: Network-level security (VPN, IPsec) required
+
+### Future Security Enhancements
+
+The ka9q-radio protocol would need updates to support:
+- HMAC-based message authentication
+- TLS/DTLS encryption for command transport
+- Role-based access control
+- Command auditing and logging
+
+These are protocol-level changes that would require updates to both radiod (C code) and ka9q-python.
+
+---
 
 ## Development
 

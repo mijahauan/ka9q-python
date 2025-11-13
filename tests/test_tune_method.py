@@ -82,7 +82,7 @@ class TestTuneMethod:
         mock_sock.recvfrom.return_value = (response, ('239.1.2.3', 5006))
         
         with patch.object(mock_control, '_setup_status_listener', return_value=mock_sock):
-            with patch('ka9q.control.random.randint', return_value=command_tag):
+            with patch('ka9q.control.secrets.randbits', return_value=command_tag):
                 with patch('select.select', return_value=([mock_sock], [], [])):
                     status = mock_control.tune(
                         ssrc=ssrc,
@@ -138,7 +138,7 @@ class TestTuneMethod:
         ]
         
         with patch.object(mock_control, '_setup_status_listener', return_value=mock_sock):
-            with patch('ka9q.control.random.randint', return_value=command_tag):
+            with patch('ka9q.control.secrets.randbits', return_value=command_tag):
                 with patch('select.select', return_value=([mock_sock], [], [])):
                     status = mock_control.tune(ssrc=ssrc, timeout=1.0)
         
@@ -169,7 +169,7 @@ class TestTuneMethod:
         mock_sock.recvfrom.return_value = (response, ('239.1.2.3', 5006))
         
         with patch.object(mock_control, '_setup_status_listener', return_value=mock_sock):
-            with patch('ka9q.control.random.randint', return_value=command_tag):
+            with patch('ka9q.control.secrets.randbits', return_value=command_tag):
                 with patch('select.select', return_value=([mock_sock], [], [])):
                     status = mock_control.tune(ssrc=ssrc, gain=gain, timeout=0.5)
         
@@ -204,7 +204,7 @@ class TestTuneMethod:
         mock_sock.recvfrom.return_value = (response, ('239.1.2.3', 5006))
         
         with patch.object(mock_control, '_setup_status_listener', return_value=mock_sock):
-            with patch('ka9q.control.random.randint', return_value=command_tag):
+            with patch('ka9q.control.secrets.randbits', return_value=command_tag):
                 with patch('select.select', return_value=([mock_sock], [], [])):
                     status = mock_control.tune(
                         ssrc=ssrc,

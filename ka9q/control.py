@@ -22,10 +22,13 @@ PARAMETERS:
 
 import socket
 import struct
-import random
+import secrets
 import logging
 import threading
-from typing import Optional
+import re
+import time
+from dataclasses import dataclass, field
+from typing import Optional, Dict
 from .types import StatusType, CMD
 from .discovery import discover_channels
 from .exceptions import ConnectionError, CommandError, ValidationError
@@ -36,6 +39,31 @@ logger = logging.getLogger(__name__)
 
 # Command packet type
 CMD = 1
+
+
+@dataclass
+class Metrics:
+    """Metrics for monitoring RadiodControl operations"""
+    commands_sent: int = 0
+    commands_failed: int = 0
+    status_received: int = 0
+    last_error: str = ""
+    last_error_time: float = 0.0
+    errors_by_type: Dict[str, int] = field(default_factory=dict)
+    
+    def to_dict(self) -> dict:
+        """Convert metrics to dictionary for easy inspection"""
+        total = max(1, self.commands_sent)  # Avoid division by zero
+        return {
+            'commands_sent': self.commands_sent,
+            'commands_failed': self.commands_failed,
+            'commands_succeeded': self.commands_sent - self.commands_failed,
+            'success_rate': (self.commands_sent - self.commands_failed) / total,
+            'status_received': self.status_received,
+            'last_error': self.last_error,
+            'last_error_time': self.last_error_time,
+            'errors_by_type': dict(self.errors_by_type),
+        }
 
 
 # Input validation functions
@@ -85,6 +113,56 @@ def _validate_positive(value: float, name: str) -> None:
         raise ValidationError(f"{name} must be a number, got {type(value).__name__}")
     if value <= 0:
         raise ValidationError(f"{name} must be positive, got {value}")
+
+
+def _validate_preset(preset: str) -> None:
+    """
+    Validate preset name is safe and within reasonable bounds
+    
+    Args:
+        preset: Preset name to validate
+        
+    Raises:
+        ValidationError: If preset name is invalid
+    """
+    if not isinstance(preset, str):
+        raise ValidationError(f"Preset must be a string, got {type(preset).__name__}")
+    if not preset:
+        raise ValidationError("Preset name cannot be empty")
+    if len(preset) > 32:
+        raise ValidationError(f"Preset name too long: {len(preset)} chars (max 32)")
+    # Check control characters FIRST (before regex)
+    if any(ord(c) < 32 or ord(c) == 127 for c in preset):
+        raise ValidationError(f"Preset name contains control characters")
+    # Allow alphanumeric, dash, underscore only
+    if not re.match(r'^[a-zA-Z0-9_-]+$', preset):
+        raise ValidationError(f"Invalid preset name '{preset}': only alphanumeric, dash, and underscore allowed")
+
+
+def _validate_string_param(value: str, param_name: str, max_length: int = 256) -> None:
+    """
+    Validate a generic string parameter
+    
+    Args:
+        value: String value to validate
+        param_name: Name of parameter (for error messages)
+        max_length: Maximum allowed length
+        
+    Raises:
+        ValidationError: If string is invalid
+    """
+    if not isinstance(value, str):
+        raise ValidationError(f"{param_name} must be a string, got {type(value).__name__}")
+    if not value:
+        raise ValidationError(f"{param_name} cannot be empty")
+    if len(value) > max_length:
+        raise ValidationError(f"{param_name} too long: {len(value)} chars (max {max_length})")
+    # Check null bytes FIRST
+    if '\x00' in value:
+        raise ValidationError(f"{param_name} contains null bytes")
+    # Then check other control characters (except newline/tab if needed)
+    if any(ord(c) < 32 and c not in '\n\t' for c in value):
+        raise ValidationError(f"{param_name} contains control characters")
 
 
 def encode_int64(buf: bytearray, type_val: int, x: int) -> int:
@@ -270,9 +348,20 @@ def decode_int(data: bytes, length: int) -> int:
         
     Returns:
         Integer value
+        
+    Raises:
+        ValidationError: If length is negative or data is insufficient
     """
+    # Validate length
+    if length < 0:
+        raise ValidationError(f"Negative length in decode_int: {length}")
     if length == 0:
         return 0
+    if length > 8:
+        logger.warning(f"Integer length {length} exceeds 8 bytes, truncating")
+        length = 8
+    if len(data) < length:
+        raise ValidationError(f"Insufficient data: need {length} bytes, have {len(data)}")
     
     value = 0
     for i in range(length):
@@ -304,7 +393,19 @@ def decode_float(data: bytes, length: int) -> float:
         
     Returns:
         Float value
+        
+    Raises:
+        ValidationError: If length is negative or data is insufficient
     """
+    # Validate length
+    if length < 0:
+        raise ValidationError(f"Negative length in decode_float: {length}")
+    if length > 4:
+        logger.warning(f"Float length {length} exceeds 4 bytes, truncating")
+        length = 4
+    if len(data) < length:
+        raise ValidationError(f"Insufficient data: need {length} bytes, have {len(data)}")
+    
     # Reconstruct 4-byte big-endian representation
     value_bytes = b'\x00' * (4 - length) + data[:length]
     return struct.unpack('>f', value_bytes)[0]
@@ -320,7 +421,19 @@ def decode_double(data: bytes, length: int) -> float:
         
     Returns:
         Float value
+        
+    Raises:
+        ValidationError: If length is negative or data is insufficient
     """
+    # Validate length
+    if length < 0:
+        raise ValidationError(f"Negative length in decode_double: {length}")
+    if length > 8:
+        logger.warning(f"Double length {length} exceeds 8 bytes, truncating")
+        length = 8
+    if len(data) < length:
+        raise ValidationError(f"Insufficient data: need {length} bytes, have {len(data)}")
+    
     # Reconstruct 8-byte big-endian representation
     value_bytes = b'\x00' * (8 - length) + data[:length]
     return struct.unpack('>d', value_bytes)[0]
@@ -350,7 +463,20 @@ def decode_string(data: bytes, length: int) -> str:
         
     Returns:
         Decoded string
+        
+    Raises:
+        ValidationError: If length is negative or data is insufficient
     """
+    # Validate length
+    if length < 0:
+        raise ValidationError(f"Negative length in decode_string: {length}")
+    if length > 65535:
+        logger.warning(f"String length {length} exceeds maximum, truncating to 65535")
+        length = 65535
+    if len(data) < length:
+        logger.warning(f"String data truncated: expected {length} bytes, have {len(data)}")
+        length = len(data)
+    
     return data[:length].decode('utf-8', errors='replace')
 
 
@@ -366,20 +492,29 @@ def decode_socket(data: bytes, length: int) -> dict:
         Dictionary with 'family', 'address', and 'port' keys
     
     Note:
-        ka9q-radio encodes sockets WITHOUT an explicit family field.
-        Family is inferred from length:
-        - 6 bytes = IPv4 (4 bytes address + 2 bytes port)
-        - 10 bytes = IPv6 (8 bytes address + 2 bytes port)
+        Handles two formats:
+        - With family field: 2 bytes family + 2 bytes port + N bytes address (length 8 for IPv4, 18 for IPv6)
+        - Without family field: N bytes address + 2 bytes port (length 6 for IPv4, 10 for IPv6)
     """
-    if length == 6:
-        # IPv4: 4 bytes address + 2 bytes port (big-endian)
+    if length == 8:
+        # Format WITH family field: family(2) + port(2) + address(4) for IPv4
+        family = struct.unpack('>H', data[0:2])[0]
+        port = struct.unpack('>H', data[2:4])[0]
+        # Check if it's actually IPv4 (AF_INET = 2)
+        if family == 2:
+            address = socket.inet_ntoa(data[4:8])
+            return {'family': 'IPv4', 'address': address, 'port': port}
+        else:
+            # Unknown family
+            return {'family': f'unknown (family={family})', 'address': '', 'port': port}
+    elif length == 6:
+        # Format WITHOUT family field: address(4) + port(2) for IPv4
         address = socket.inet_ntoa(data[0:4])
         port = struct.unpack('>H', data[4:6])[0]
         return {'family': 'IPv4', 'address': address, 'port': port}
     elif length == 10:
-        # IPv6: 8 bytes address + 2 bytes port (big-endian)
+        # Format WITHOUT family field: address(8) + port(2) for IPv6 (truncated)
         # Note: This is a truncated IPv6 address (only 8 bytes instead of 16)
-        # This appears to be how ka9q-radio encodes it
         address_bytes = data[0:8]
         port = struct.unpack('>H', data[8:10])[0]
         # Format as hex string since it's truncated
@@ -398,18 +533,29 @@ class RadiodControl:
     and configure channels.
     """
     
-    def __init__(self, status_address: str):
+    def __init__(self, status_address: str, max_commands_per_sec: int = 100):
         """
         Initialize radiod control
         
         Args:
             status_address: mDNS name or IP:port of radiod status stream
+            max_commands_per_sec: Maximum commands per second (rate limiting)
         """
         self.status_address = status_address
         self.socket = None
         self._status_sock = None  # Cached status listener socket for tune()
         self._status_sock_lock = None  # Will be initialized when needed
         self._socket_lock = threading.RLock()  # Protect control socket operations
+        
+        # Rate limiting
+        self.max_commands_per_sec = max_commands_per_sec
+        self._command_count = 0
+        self._command_window_start = time.time()
+        self._rate_limit_lock = threading.Lock()
+        
+        # Metrics tracking
+        self.metrics = Metrics()
+        
         self._connect()
     
     def __enter__(self):
@@ -486,6 +632,36 @@ class RadiodControl:
             logger.error(f"Unexpected error connecting to radiod: {e}", exc_info=True)
             raise ConnectionError(f"Failed to connect to radiod: {e}") from e
     
+    def _check_rate_limit(self):
+        """
+        Check and enforce rate limiting (thread-safe)
+        
+        Implements a sliding window rate limiter to prevent DoS attacks
+        and network flooding.
+        """
+        with self._rate_limit_lock:
+            now = time.time()
+            
+            # Reset window every second
+            if now - self._command_window_start >= 1.0:
+                self._command_count = 0
+                self._command_window_start = now
+            
+            # Check limit
+            if self._command_count >= self.max_commands_per_sec:
+                sleep_time = 1.0 - (now - self._command_window_start)
+                if sleep_time > 0:
+                    logger.warning(
+                        f"Rate limit reached ({self.max_commands_per_sec}/sec), "
+                        f"sleeping {sleep_time:.3f}s"
+                    )
+                    time.sleep(sleep_time)
+                    # Reset after sleeping
+                    self._command_count = 0
+                    self._command_window_start = time.time()
+            
+            self._command_count += 1
+    
     def send_command(self, cmdbuffer: bytearray, max_retries: int = 3, retry_delay: float = 0.1):
         """
         Send a command packet to radiod with retry logic (thread-safe)
@@ -505,7 +681,12 @@ class RadiodControl:
         with self._socket_lock:
             if not self.socket:
                 raise RuntimeError("Not connected to radiod")
-            
+        
+        # Apply rate limiting
+        self._check_rate_limit()
+        
+        with self._socket_lock:
+            attempt = 0
             last_error = None
             for attempt in range(max_retries):
                 try:
@@ -514,7 +695,8 @@ class RadiodControl:
                     logger.debug(f"Sending {len(cmdbuffer)} bytes to {self.dest_addr} (attempt {attempt+1}/{max_retries}): {hex_dump}")
                     
                     sent = self.socket.sendto(bytes(cmdbuffer), self.dest_addr)
-                    logger.debug(f"Sent {sent} bytes to radiod")
+                    logger.debug(f"Command sent successfully (attempt {attempt + 1})")
+                    self.metrics.commands_sent += 1
                     return sent
                     
                 except socket.error as e:
@@ -525,8 +707,14 @@ class RadiodControl:
                         logger.warning(f"Socket error on attempt {attempt+1}/{max_retries}: {e}. Retrying in {delay:.2f}s...")
                         time.sleep(delay)
                     else:
-                        logger.error(f"Socket error sending command after {max_retries} attempts: {e}")
-                        raise CommandError(f"Failed to send command after {max_retries} attempts: {e}") from e
+                        logger.error(f"Failed to send command after {max_retries} attempts: {last_error}")
+                        self.metrics.commands_sent += 1
+                        self.metrics.commands_failed += 1
+                        self.metrics.last_error = str(last_error)
+                        self.metrics.last_error_time = time.time()
+                        error_type = type(last_error).__name__
+                        self.metrics.errors_by_type[error_type] = self.metrics.errors_by_type.get(error_type, 0) + 1
+                        raise CommandError(f"Command failed after {max_retries} attempts") from last_error
                         
                 except Exception as e:
                     logger.error(f"Unexpected error sending command: {e}", exc_info=True)
@@ -555,7 +743,7 @@ class RadiodControl:
         
         encode_double(cmdbuffer, StatusType.RADIO_FREQUENCY, frequency_hz)
         encode_int(cmdbuffer, StatusType.OUTPUT_SSRC, ssrc)
-        encode_int(cmdbuffer, StatusType.COMMAND_TAG, random.randint(1, 2**31))
+        encode_int(cmdbuffer, StatusType.COMMAND_TAG, secrets.randbits(31))
         encode_eol(cmdbuffer)
         
         logger.info(f"Setting frequency for SSRC {ssrc} to {frequency_hz/1e6:.3f} MHz")
@@ -568,13 +756,19 @@ class RadiodControl:
         Args:
             ssrc: SSRC of the channel
             preset: Preset name (e.g., "iq", "usb", "lsb")
+            
+        Raises:
+            ValidationError: If preset name is invalid
         """
+        _validate_ssrc(ssrc)
+        _validate_preset(preset)
+        
         cmdbuffer = bytearray()
         cmdbuffer.append(CMD)
         
         encode_string(cmdbuffer, StatusType.PRESET, preset)
         encode_int(cmdbuffer, StatusType.OUTPUT_SSRC, ssrc)
-        encode_int(cmdbuffer, StatusType.COMMAND_TAG, random.randint(1, 2**31))
+        encode_int(cmdbuffer, StatusType.COMMAND_TAG, secrets.randbits(31))
         encode_eol(cmdbuffer)
         
         logger.info(f"Setting preset for SSRC {ssrc} to {preset}")
@@ -599,7 +793,7 @@ class RadiodControl:
         
         encode_int(cmdbuffer, StatusType.OUTPUT_SAMPRATE, sample_rate)
         encode_int(cmdbuffer, StatusType.OUTPUT_SSRC, ssrc)
-        encode_int(cmdbuffer, StatusType.COMMAND_TAG, random.randint(1, 2**31))
+        encode_int(cmdbuffer, StatusType.COMMAND_TAG, secrets.randbits(31))
         encode_eol(cmdbuffer)
         
         logger.info(f"Setting sample rate for SSRC {ssrc} to {sample_rate} Hz")
@@ -633,7 +827,7 @@ class RadiodControl:
             encode_float(cmdbuffer, StatusType.AGC_ATTACK_RATE, attack_rate)
         
         encode_int(cmdbuffer, StatusType.OUTPUT_SSRC, ssrc)
-        encode_int(cmdbuffer, StatusType.COMMAND_TAG, random.randint(1, 2**31))
+        encode_int(cmdbuffer, StatusType.COMMAND_TAG, secrets.randbits(31))
         encode_eol(cmdbuffer)
         
         logger.info(f"Setting AGC for SSRC {ssrc}: enable={enable}, hangtime={hangtime}, headroom={headroom}")
@@ -658,7 +852,7 @@ class RadiodControl:
         
         encode_double(cmdbuffer, StatusType.GAIN, gain_db)
         encode_int(cmdbuffer, StatusType.OUTPUT_SSRC, ssrc)
-        encode_int(cmdbuffer, StatusType.COMMAND_TAG, random.randint(1, 2**31))
+        encode_int(cmdbuffer, StatusType.COMMAND_TAG, secrets.randbits(31))
         encode_eol(cmdbuffer)
         
         logger.info(f"Setting gain for SSRC {ssrc} to {gain_db} dB")
@@ -686,7 +880,7 @@ class RadiodControl:
             encode_float(cmdbuffer, StatusType.KAISER_BETA, kaiser_beta)
         
         encode_int(cmdbuffer, StatusType.OUTPUT_SSRC, ssrc)
-        encode_int(cmdbuffer, StatusType.COMMAND_TAG, random.randint(1, 2**31))
+        encode_int(cmdbuffer, StatusType.COMMAND_TAG, secrets.randbits(31))
         encode_eol(cmdbuffer)
         
         logger.info(f"Setting filter for SSRC {ssrc}: low={low_edge}, high={high_edge}, beta={kaiser_beta}")
@@ -705,7 +899,7 @@ class RadiodControl:
         
         encode_double(cmdbuffer, StatusType.SHIFT_FREQUENCY, shift_hz)
         encode_int(cmdbuffer, StatusType.OUTPUT_SSRC, ssrc)
-        encode_int(cmdbuffer, StatusType.COMMAND_TAG, random.randint(1, 2**31))
+        encode_int(cmdbuffer, StatusType.COMMAND_TAG, secrets.randbits(31))
         encode_eol(cmdbuffer)
         
         logger.info(f"Setting frequency shift for SSRC {ssrc} to {shift_hz} Hz")
@@ -724,7 +918,7 @@ class RadiodControl:
         
         encode_float(cmdbuffer, StatusType.OUTPUT_LEVEL, level)
         encode_int(cmdbuffer, StatusType.OUTPUT_SSRC, ssrc)
-        encode_int(cmdbuffer, StatusType.COMMAND_TAG, random.randint(1, 2**31))
+        encode_int(cmdbuffer, StatusType.COMMAND_TAG, secrets.randbits(31))
         encode_eol(cmdbuffer)
         
         logger.info(f"Setting output level for SSRC {ssrc} to {level}")
@@ -784,6 +978,7 @@ class RadiodControl:
         
         # PRESET: Mode name (e.g., "iq", "usb", "lsb")
         # This MUST come first - radiod uses it to set up the channel
+        _validate_preset(preset)
         encode_string(cmdbuffer, StatusType.PRESET, preset)
         logger.info(f"Setting preset for SSRC {ssrc} to {preset}")
         
@@ -811,7 +1006,7 @@ class RadiodControl:
         
         # SSRC and command tag
         encode_int(cmdbuffer, StatusType.OUTPUT_SSRC, ssrc)
-        encode_int(cmdbuffer, StatusType.COMMAND_TAG, random.randint(1, 2**31))
+        encode_int(cmdbuffer, StatusType.COMMAND_TAG, secrets.randbits(31))
         encode_eol(cmdbuffer)
         
         # Send the single packet
@@ -849,6 +1044,50 @@ class RadiodControl:
         
         logger.info(f"Channel {ssrc} verified: {channel.frequency/1e6:.3f} MHz, {channel.preset}")
         return True
+    
+    def remove_channel(self, ssrc: int):
+        """
+        Remove a channel from radiod
+        
+        In radiod, setting a channel's frequency to 0 marks it for removal.
+        Radiod periodically polls for channels with frequency=0 and removes them,
+        so the removal is not instantaneous but happens within the next polling cycle.
+        
+        This is the proper way to clean up unused channels and prevent radiod
+        from accumulating orphaned channel instances.
+        
+        Args:
+            ssrc: SSRC of the channel to remove
+            
+        Raises:
+            ValidationError: If SSRC is invalid
+            
+        Example:
+            >>> control = RadiodControl("radiod.local")
+            >>> control.create_channel(ssrc=14074000, frequency_hz=14.074e6)
+            >>> # ... use channel ...
+            >>> control.remove_channel(ssrc=14074000)  # Mark for removal
+            >>> # Channel will be removed by radiod in next polling cycle
+        
+        Note:
+            - Removal is NOT instantaneous - radiod polls periodically for channels to remove
+            - Always call this when your application is done with a channel
+            - Especially important for long-running applications that create temporary channels
+            - The channel may still appear in discovery for a brief time after calling this
+        """
+        _validate_ssrc(ssrc)
+        
+        cmdbuffer = bytearray()
+        cmdbuffer.append(CMD)
+        
+        # Setting frequency to 0 removes the channel in radiod
+        encode_double(cmdbuffer, StatusType.RADIO_FREQUENCY, 0.0)
+        encode_int(cmdbuffer, StatusType.OUTPUT_SSRC, ssrc)
+        encode_int(cmdbuffer, StatusType.COMMAND_TAG, secrets.randbits(31))
+        encode_eol(cmdbuffer)
+        
+        logger.info(f"Removing channel SSRC {ssrc}")
+        self.send_command(cmdbuffer)
     
     def _setup_status_listener(self):
         """Set up socket to listen for status responses"""
@@ -981,11 +1220,12 @@ class RadiodControl:
         cmdbuffer.append(CMD)
         
         # Generate command tag for matching response
-        command_tag = random.randint(1, 2**31)
+        command_tag = secrets.randbits(31)
         encode_int(cmdbuffer, StatusType.COMMAND_TAG, command_tag)
         encode_int(cmdbuffer, StatusType.OUTPUT_SSRC, ssrc)
         
         if preset is not None:
+            _validate_preset(preset)
             encode_string(cmdbuffer, StatusType.PRESET, preset)
         
         if sample_rate is not None:
@@ -1191,7 +1431,30 @@ class RadiodControl:
                     # SNR calculation failed, skip it
                     pass
         
+        # Track status received
+        self.metrics.status_received += 1
         return status
+    
+    def get_metrics(self) -> dict:
+        """
+        Get current metrics as a dictionary
+        
+        Returns:
+            Dictionary containing performance and error metrics
+            
+        Example:
+            >>> control = RadiodControl("radiod.local")
+            >>> control.create_channel(ssrc=12345, frequency_hz=14.074e6)
+            >>> metrics = control.get_metrics()
+            >>> print(f"Success rate: {metrics['success_rate']:.1%}")
+            >>> print(f"Commands sent: {metrics['commands_sent']}")
+        """
+        return self.metrics.to_dict()
+    
+    def reset_metrics(self):
+        """Reset all metrics to zero"""
+        self.metrics = Metrics()
+        logger.info("Metrics reset")
     
     def close(self):
         """
