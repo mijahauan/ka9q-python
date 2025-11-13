@@ -21,11 +21,12 @@ Main class for controlling radiod channels.
 ### Constructor
 
 ```python
-RadiodControl(status_address: str)
+RadiodControl(status_address: str, max_commands_per_sec: int = 100)
 ```
 
 **Parameters:**
 - `status_address` (str): mDNS name (e.g., "radiod.local") or IP address of radiod status stream
+- `max_commands_per_sec` (int): Maximum commands per second for rate limiting (default: 100)
 
 **Raises:**
 - `ConnectionError`: If unable to connect to radiod
@@ -33,9 +34,11 @@ RadiodControl(status_address: str)
 **Example:**
 ```python
 control = RadiodControl("bee1-hf-status.local")
-# or
-control = RadiodControl("239.251.200.193")
+# or with custom rate limit
+control = RadiodControl("239.251.200.193", max_commands_per_sec=50)
 ```
+
+**New in v2.2.0**: Rate limiting parameter added to prevent DoS attacks
 
 ---
 
@@ -287,6 +290,66 @@ set_output_level(ssrc: int, level: float) → None
 
 ---
 
+### Channel Lifecycle
+
+#### `remove_channel()`
+
+**New in v2.2.0**
+
+Remove a channel from radiod by marking it for removal.
+
+```python
+remove_channel(ssrc: int) → None
+```
+
+**Parameters:**
+- `ssrc` (int): SSRC of the channel to remove
+
+**Raises:**
+- `ValidationError`: If SSRC is invalid
+
+**Example:**
+```python
+# Always cleanup channels when done
+with RadiodControl("radiod.local") as control:
+    control.create_channel(ssrc=14074000, frequency_hz=14.074e6, preset="usb")
+    # ... use channel ...
+    control.remove_channel(ssrc=14074000)  # Mark for removal
+```
+
+**Important Notes:**
+- Removal is **NOT instantaneous** - radiod polls periodically for channels to remove
+- Setting frequency to 0 marks the channel for removal
+- Channel may still appear in discovery briefly after calling this method
+- **Always** remove channels when your application is done with them
+- Essential for long-running applications to prevent resource accumulation
+
+**Best Practices:**
+```python
+# Pattern 1: Context manager with cleanup
+with RadiodControl("radiod.local") as control:
+    control.create_channel(ssrc=14074000, frequency_hz=14.074e6)
+    try:
+        # Use channel...
+        pass
+    finally:
+        control.remove_channel(ssrc=14074000)
+
+# Pattern 2: Track and cleanup multiple channels
+channels = []
+try:
+    for freq in [14.074e6, 7.074e6, 3.573e6]:
+        ssrc = int(freq)
+        control.create_channel(ssrc=ssrc, frequency_hz=freq)
+        channels.append(ssrc)
+    # Use channels...
+finally:
+    for ssrc in channels:
+        control.remove_channel(ssrc)
+```
+
+---
+
 ### Tuning and Status
 
 #### `tune()`
@@ -423,6 +486,87 @@ finally:
 
 ---
 
+### Metrics and Observability
+
+**New in v2.2.0**
+
+#### `get_metrics()`
+
+Get operational metrics for monitoring and observability.
+
+```python
+get_metrics() → Metrics
+```
+
+**Returns:**
+- `Metrics`: Dataclass containing operational statistics
+
+**Example:**
+```python
+control = RadiodControl("radiod.local")
+control.create_channel(ssrc=14074000, frequency_hz=14.074e6)
+# ... perform operations ...
+
+metrics = control.get_metrics()
+print(f"Commands sent: {metrics.commands_sent}")
+print(f"Successful: {metrics.commands_successful}")
+print(f"Errors: {metrics.command_errors}")
+print(f"Timeouts: {metrics.command_timeouts}")
+print(f"Rate limits: {metrics.rate_limit_hits}")
+
+# Or as dictionary
+data = metrics.to_dict()
+print(f"Success rate: {data['success_rate']:.1%}")
+```
+
+---
+
+#### `reset_metrics()`
+
+Reset all metrics counters to zero.
+
+```python
+reset_metrics() → None
+```
+
+**Example:**
+```python
+control.reset_metrics()  # Start fresh monitoring period
+# ... perform operations ...
+metrics = control.get_metrics()
+```
+
+---
+
+#### Metrics Dataclass
+
+```python
+@dataclass
+class Metrics:
+    commands_sent: int = 0           # Total commands sent
+    commands_successful: int = 0     # Successfully sent commands
+    command_errors: int = 0          # Commands that failed
+    command_timeouts: int = 0        # Commands that timed out
+    rate_limit_hits: int = 0         # Times rate limit was enforced
+    
+    def to_dict() → dict:
+        """Convert to dictionary with calculated success_rate"""
+```
+
+**Dictionary Keys** (from `to_dict()`):
+- `commands_sent`: Total commands sent
+- `commands_successful`: Successfully sent
+- `command_errors`: Failed commands
+- `command_timeouts`: Timed out commands
+- `rate_limit_hits`: Rate limit enforcements
+- `success_rate`: Calculated as `successful / max(1, sent)` (0.0 to 1.0)
+
+**Thread Safety:**
+- All metrics operations are thread-safe
+- Counters use atomic operations
+
+---
+
 ### Low-Level Operations
 
 #### `send_command()`
@@ -450,6 +594,8 @@ send_command(cmdbuffer: bytearray,
 **Notes:**
 - Uses exponential backoff for retries (0.1s → 0.2s → 0.4s)
 - Thread-safe with `_socket_lock`
+- **Rate limiting** enforced (v2.2.0+): Automatically sleeps if command rate exceeds `max_commands_per_sec`
+- Updates metrics counters for monitoring
 - Most users should use higher-level methods instead
 
 ---
@@ -872,9 +1018,33 @@ control.create_channel(ssrc=-1, ...)  # Raises ValidationError immediately
 
 ```python
 import ka9q
-print(ka9q.__version__)  # "2.1.0"
+print(ka9q.__version__)  # "2.2.0"
 print(ka9q.__author__)   # "Michael J. Hauan"
 ```
+
+---
+
+## What's New in v2.2.0
+
+### Security Enhancements
+- **Cryptographic random numbers**: Command tags use `secrets.randbits()` instead of `random.randint()`
+- **Input validation**: Comprehensive validation for all string parameters
+- **Bounds checking**: All TLV decoders validate data before processing
+- **Resource cleanup**: Improved error handling and socket cleanup
+
+### Rate Limiting & Observability
+- **Rate limiting**: `max_commands_per_sec` parameter (default: 100)
+- **Metrics tracking**: `get_metrics()` and `reset_metrics()` methods
+- **DoS prevention**: Automatic command rate enforcement
+
+### Channel Lifecycle
+- **Channel cleanup**: `remove_channel()` method for proper resource management
+- Essential for long-running applications
+
+### Documentation
+- Comprehensive security considerations
+- Channel cleanup best practices
+- Enhanced API documentation
 
 ---
 
