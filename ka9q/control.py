@@ -533,15 +533,19 @@ class RadiodControl:
     and configure channels.
     """
     
-    def __init__(self, status_address: str, max_commands_per_sec: int = 100):
+    def __init__(self, status_address: str, max_commands_per_sec: int = 100,
+                 interface: Optional[str] = None):
         """
         Initialize radiod control
         
         Args:
             status_address: mDNS name or IP:port of radiod status stream
             max_commands_per_sec: Maximum commands per second (rate limiting)
+            interface: IP address of network interface for multicast (e.g., '192.168.1.100').
+                      Required on multi-homed systems. If None, uses INADDR_ANY (0.0.0.0).
         """
         self.status_address = status_address
+        self.interface = interface
         self.socket = None
         self._status_sock = None  # Cached status listener socket for tune()
         self._status_sock_lock = None  # Will be initialized when needed
@@ -585,19 +589,22 @@ class RadiodControl:
             # Set socket options for multicast
             import struct
             
-            # Use default interface (INADDR_ANY) for multicast
-            # This allows the OS to select the appropriate interface
-            self.socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, 
-                                 socket.inet_aton('0.0.0.0'))
-            logger.debug(f"Set IP_MULTICAST_IF to INADDR_ANY")
+            # Determine interface address for multicast operations
+            # Use specified interface for multi-homed systems, or INADDR_ANY otherwise
+            interface_addr = self.interface if self.interface else '0.0.0.0'
             
-            # Join the multicast group on any interface
+            # Set multicast interface for sending
+            self.socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, 
+                                 socket.inet_aton(interface_addr))
+            logger.debug(f"Set IP_MULTICAST_IF to {interface_addr}")
+            
+            # Join the multicast group on specified interface
             mreq = struct.pack('=4s4s', 
                               socket.inet_aton(mcast_addr),  # multicast group address
-                              socket.inet_aton('0.0.0.0'))  # any interface (INADDR_ANY)
+                              socket.inet_aton(interface_addr))  # interface to use
             try:
                 self.socket.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
-                logger.debug(f"Joined multicast group {mcast_addr} on any interface")
+                logger.debug(f"Joined multicast group {mcast_addr} on interface {interface_addr}")
             except OSError as e:
                 # EADDRINUSE is not fatal - group already joined
                 if e.errno != 48:  # EADDRINUSE on macOS
@@ -621,13 +628,6 @@ class RadiodControl:
         except socket.error as e:
             logger.error(f"Socket error connecting to radiod: {e}")
             raise ConnectionError(f"Failed to create socket: {e}") from e
-        except subprocess.TimeoutExpired as e:
-            logger.error(f"Timeout resolving address: {e}")
-            raise ConnectionError(f"Address resolution timeout: {e}") from e
-        except FileNotFoundError as e:
-            # mDNS tools not found, but getaddrinfo should work
-            logger.debug(f"mDNS tools not available: {e}")
-            raise ConnectionError(f"Cannot resolve address (mDNS tools unavailable): {e}") from e
         except Exception as e:
             logger.error(f"Unexpected error connecting to radiod: {e}", exc_info=True)
             raise ConnectionError(f"Failed to connect to radiod: {e}") from e
@@ -1114,13 +1114,14 @@ class RadiodControl:
             logger.error(f"Failed to bind socket: {e}")
             raise
         
-        # Join the multicast group on any interface
+        # Join the multicast group on specified interface
         # Use the status multicast address (where status packets are sent)
+        interface_addr = self.interface if self.interface else '0.0.0.0'
         mreq = struct.pack('=4s4s', 
                           socket.inet_aton(self.status_mcast_addr),  # status multicast group
-                          socket.inet_aton('0.0.0.0'))  # any interface (INADDR_ANY)
+                          socket.inet_aton(interface_addr))  # interface to use
         status_sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
-        logger.debug(f"Joined status multicast group {self.status_mcast_addr} for status listening")
+        logger.debug(f"Joined status multicast group {self.status_mcast_addr} on interface {interface_addr}")
         
         # Set timeout for polling
         status_sock.settimeout(0.1)  # 100ms timeout

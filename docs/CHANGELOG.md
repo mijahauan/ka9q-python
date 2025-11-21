@@ -5,6 +5,98 @@ All notable changes to ka9q-python will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0] - 2025-11-21
+
+### Added - Multi-Homed System Support 🎉
+
+**Major Feature**: Full support for systems with multiple network interfaces (multi-homed systems).
+
+#### New Parameters
+- **`RadiodControl(interface=...)`**: Optional interface parameter for specifying network interface
+  - Example: `RadiodControl("radiod.local", interface="192.168.1.100")`
+  - Required on multi-homed systems to control which interface receives multicast traffic
+  - Defaults to `None` (uses INADDR_ANY 0.0.0.0) for backward compatibility
+
+- **`discover_channels(interface=...)`**: Optional interface parameter for channel discovery
+  - Example: `discover_channels("radiod.local", interface="192.168.1.100")`
+  - Passes through to `discover_channels_native()`
+  
+- **`discover_channels_native(interface=...)`**: Interface parameter already existed, now integrated
+  
+- **`create_multicast_socket(interface=...)`**: Optional interface parameter for utility function
+
+#### Implementation Details
+- All multicast operations (`IP_ADD_MEMBERSHIP`, `IP_MULTICAST_IF`) now use specified interface
+- When `interface=None`, defaults to `0.0.0.0` (INADDR_ANY) - maintains existing behavior
+- When `interface` is specified, multicast joins and sends occur on that specific interface
+
+#### Documentation
+- **New**: `docs/MULTI_HOMED_QUICK_REF.md` - Quick reference guide for multi-homed usage
+- **New**: `docs/development/MULTI_HOMED_SUPPORT_REVIEW.md` - Comprehensive implementation review
+- **New**: `docs/development/MULTI_HOMED_ACTION_PLAN.md` - Implementation plan and details
+- **New**: `docs/development/MULTI_HOMED_IMPLEMENTATION_COMPLETE.md` - Complete implementation summary
+- **Updated**: `docs/API_REFERENCE.md` - Added interface parameter documentation with examples
+- **Updated**: `README.md` - Added "Multi-Homed Systems" section to Quick Start
+- **Updated**: `examples/discover_example.py` - Added Method 4 showing multi-homed usage
+
+#### Testing
+- **New**: `tests/test_multihomed.py` - Comprehensive test suite
+  - Backward compatibility tests (all passing ✅)
+  - Multi-homed support tests (all passing ✅)
+  - Parameter propagation tests (all passing ✅)
+
+### Changed
+- **`ka9q/control.py`**: 
+  - `RadiodControl._connect()` now uses interface parameter for multicast operations
+  - `RadiodControl._setup_status_listener()` now uses interface parameter
+  - Removed unreachable `subprocess.TimeoutExpired` exception handler (bug fix)
+  
+- **`ka9q/discovery.py`**: 
+  - `discover_channels()` now accepts and passes through interface parameter
+  
+- **`ka9q/utils.py`**: 
+  - `create_multicast_socket()` now accepts interface parameter
+  - Added `from typing import Optional` import
+
+### Technical Details
+- **Socket binding**: Remains `0.0.0.0` (correct for receiving multicast)
+- **Multicast join**: Now uses specified interface or defaults to `0.0.0.0`
+- **Multicast send**: Now uses specified interface via `IP_MULTICAST_IF`
+- **Logging**: Enhanced to show which interface is being used
+
+### Backward Compatibility
+- ✅ **100% backward compatible** - all existing code works without modification
+- ✅ Optional parameter with safe default (`None` → `0.0.0.0`)
+- ✅ No breaking changes to any APIs
+- ✅ All existing tests continue to pass
+
+### Use Cases
+This feature enables:
+- Running ka9q-python on servers with multiple NICs
+- Controlling which network receives multicast traffic
+- Using VPNs alongside local networks
+- Multi-interface routing scenarios
+- Proper operation in complex network environments
+
+### Migration Guide
+**No migration needed** - this is a purely additive feature. To use multi-homed support:
+
+```python
+# Before (still works)
+control = RadiodControl("radiod.local")
+channels = discover_channels("radiod.local")
+
+# After (new capability)
+control = RadiodControl("radiod.local", interface="192.168.1.100")
+channels = discover_channels("radiod.local", interface="192.168.1.100")
+```
+
+To find your interface IP:
+- Linux/macOS: `ifconfig` or `ip addr show`
+- Windows: `ipconfig`
+
+---
+
 ## [2.1.0] - 2025-11-11
 
 ### Breaking Changes

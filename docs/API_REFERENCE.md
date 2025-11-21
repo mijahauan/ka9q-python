@@ -21,24 +21,33 @@ Main class for controlling radiod channels.
 ### Constructor
 
 ```python
-RadiodControl(status_address: str, max_commands_per_sec: int = 100)
+RadiodControl(status_address: str, 
+              max_commands_per_sec: int = 100,
+              interface: Optional[str] = None)
 ```
 
 **Parameters:**
 - `status_address` (str): mDNS name (e.g., "radiod.local") or IP address of radiod status stream
 - `max_commands_per_sec` (int): Maximum commands per second for rate limiting (default: 100)
+- `interface` (str, optional): IP address of network interface for multicast (e.g., '192.168.1.100'). Required on multi-homed systems. If None, uses INADDR_ANY (0.0.0.0) which works on single-homed systems.
 
 **Raises:**
 - `ConnectionError`: If unable to connect to radiod
 
 **Example:**
 ```python
+# Single-homed system (default)
 control = RadiodControl("bee1-hf-status.local")
-# or with custom rate limit
+
+# Multi-homed system (specify interface)
+control = RadiodControl("bee1-hf-status.local", interface="192.168.1.100")
+
+# Custom rate limit
 control = RadiodControl("239.251.200.193", max_commands_per_sec=50)
 ```
 
-**New in v2.2.0**: Rate limiting parameter added to prevent DoS attacks
+**New in v2.2.0**: Rate limiting parameter added to prevent DoS attacks  
+**New in v2.3.0**: Interface parameter added for multi-homed system support
 
 ---
 
@@ -611,20 +620,27 @@ Discover channels using the best available method.
 ```python
 discover_channels(status_address: str,
                   listen_duration: float = 2.0,
-                  use_native: bool = True) → Dict[int, ChannelInfo]
+                  use_native: bool = True,
+                  interface: Optional[str] = None) → Dict[int, ChannelInfo]
 ```
 
 **Parameters:**
 - `status_address` (str): Status multicast address (e.g., "radiod.local")
 - `listen_duration` (float): Duration to listen for native discovery (default: 2.0s)
 - `use_native` (bool): If True, use native Python listener; if False, use control utility
+- `interface` (str, optional): IP address of network interface (e.g., '192.168.1.100'). Required on multi-homed systems.
 
 **Returns:**
 - `Dict[int, ChannelInfo]`: Dictionary mapping SSRC to ChannelInfo
 
 **Example:**
 ```python
+# Single-homed system
 channels = discover_channels("radiod.local")
+
+# Multi-homed system
+channels = discover_channels("radiod.local", interface="192.168.1.100")
+
 for ssrc, info in channels.items():
     print(f"SSRC {ssrc}: {info.frequency/1e6:.3f} MHz, {info.preset}")
 ```
@@ -642,19 +658,27 @@ Discover channels by listening to radiod status multicast (pure Python).
 
 ```python
 discover_channels_native(status_address: str,
-                         listen_duration: float = 2.0) → Dict[int, ChannelInfo]
+                         listen_duration: float = 2.0,
+                         interface: Optional[str] = None) → Dict[int, ChannelInfo]
 ```
 
 **Parameters:**
 - `status_address` (str): Status multicast address
 - `listen_duration` (float): How long to listen for status packets (default: 2.0s)
+- `interface` (str, optional): IP address of network interface (e.g., '192.168.1.100'). Required on multi-homed systems.
 
 **Returns:**
 - `Dict[int, ChannelInfo]`: Dictionary mapping SSRC to ChannelInfo
 
 **Example:**
 ```python
+# Single-homed system
 channels = discover_channels_native("radiod.local", listen_duration=5.0)
+
+# Multi-homed system
+channels = discover_channels_native("radiod.local", 
+                                   listen_duration=5.0,
+                                   interface="192.168.1.100")
 ```
 
 ---

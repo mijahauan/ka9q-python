@@ -81,6 +81,24 @@ def main():
         print("(This is expected if 'control' is not installed)")
     
     print()
+    
+    # Method 4: Multi-homed system (specify network interface)
+    print("Method 4: Multi-homed system (specify interface)")
+    print("-" * 70)
+    print("For systems with multiple network interfaces, you can specify")
+    print("which interface to use for multicast traffic.")
+    print()
+    print("Example usage:")
+    print("  # Specify your interface IP address")
+    print("  my_interface = '192.168.1.100'  # Replace with your interface IP")
+    print("  channels = discover_channels(status_address, interface=my_interface)")
+    print()
+    print("To find your interface IP:")
+    print("  Linux/macOS: ip addr show  or  ifconfig")
+    print("  Windows:     ipconfig")
+    print()
+    
+    print()
     print("=" * 70)
 
 

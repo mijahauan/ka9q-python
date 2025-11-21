@@ -9,6 +9,7 @@ import socket
 import subprocess
 import re
 import logging
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +95,8 @@ def resolve_multicast_address(address: str, timeout: float = 5.0) -> str:
 
 
 def create_multicast_socket(multicast_addr: str, port: int = 5006, 
-                            bind_addr: str = '0.0.0.0') -> socket.socket:
+                            bind_addr: str = '0.0.0.0',
+                            interface: Optional[str] = None) -> socket.socket:
     """
     Create and configure a UDP socket for multicast operations
     
@@ -105,6 +107,9 @@ def create_multicast_socket(multicast_addr: str, port: int = 5006,
         multicast_addr: Multicast group IP address
         port: Port number (default: 5006 for radiod)
         bind_addr: Address to bind to (default: '0.0.0.0' for all interfaces)
+        interface: IP address of network interface for multicast membership
+                  (e.g., '192.168.1.100'). Required on multi-homed systems.
+                  If None, uses INADDR_ANY (0.0.0.0).
         
     Returns:
         Configured socket ready for multicast operations
@@ -115,6 +120,9 @@ def create_multicast_socket(multicast_addr: str, port: int = 5006,
     Example:
         >>> sock = create_multicast_socket('239.251.200.193')
         >>> sock.sendto(data, ('239.251.200.193', 5006))
+        
+        >>> # Multi-homed system
+        >>> sock = create_multicast_socket('239.251.200.193', interface='192.168.1.100')
     """
     import struct
     
@@ -141,13 +149,14 @@ def create_multicast_socket(multicast_addr: str, port: int = 5006,
         sock.close()
         raise
     
-    # Join multicast group
+    # Join multicast group on specified interface
+    interface_addr = interface if interface else '0.0.0.0'
     mreq = struct.pack('=4s4s',
                       socket.inet_aton(multicast_addr),  # multicast group
-                      socket.inet_aton('0.0.0.0'))  # any interface (INADDR_ANY)
+                      socket.inet_aton(interface_addr))  # interface to use
     try:
         sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
-        logger.debug(f"Joined multicast group {multicast_addr}")
+        logger.debug(f"Joined multicast group {multicast_addr} on interface {interface_addr}")
     except OSError as e:
         # EADDRINUSE is not fatal - group already joined
         if e.errno != 48:  # EADDRINUSE on macOS

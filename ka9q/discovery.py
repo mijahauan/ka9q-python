@@ -32,7 +32,7 @@ class ChannelInfo:
     port: int
 
 
-def _create_status_listener_socket(multicast_addr: str) -> socket.socket:
+def _create_status_listener_socket(multicast_addr: str, interface: Optional[str] = None) -> socket.socket:
     """
     Create a UDP socket configured to listen for radiod status multicast.
     
@@ -41,6 +41,8 @@ def _create_status_listener_socket(multicast_addr: str) -> socket.socket:
     
     Args:
         multicast_addr: IP address of the multicast group
+        interface: IP address of the network interface to use (e.g., '192.168.1.100')
+                  If None, uses INADDR_ANY (0.0.0.0) which works on single-homed systems
         
     Returns:
         Configured socket ready to receive status packets
@@ -65,12 +67,13 @@ def _create_status_listener_socket(multicast_addr: str) -> socket.socket:
         logger.error(f"Failed to bind socket to port 5006: {e}")
         raise
     
-    # Join multicast group on any interface
+    # Join multicast group on specified interface (or any interface if not specified)
+    interface_addr = interface if interface else '0.0.0.0'
     mreq = struct.pack('=4s4s',
                       socket.inet_aton(multicast_addr),  # multicast group
-                      socket.inet_aton('0.0.0.0'))  # any interface (INADDR_ANY)
+                      socket.inet_aton(interface_addr))  # interface to use
     sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
-    logger.debug(f"Joined multicast group {multicast_addr}")
+    logger.debug(f"Joined multicast group {multicast_addr} on interface {interface_addr}")
     
     # Set timeout for non-blocking reception
     sock.settimeout(0.1)
@@ -78,7 +81,8 @@ def _create_status_listener_socket(multicast_addr: str) -> socket.socket:
     return sock
 
 
-def discover_channels_native(status_address: str, listen_duration: float = 2.0) -> Dict[int, ChannelInfo]:
+def discover_channels_native(status_address: str, listen_duration: float = 2.0, 
+                            interface: Optional[str] = None) -> Dict[int, ChannelInfo]:
     """
     Discover channels by listening to radiod status multicast (pure Python)
     
@@ -88,6 +92,9 @@ def discover_channels_native(status_address: str, listen_duration: float = 2.0) 
     Args:
         status_address: Status multicast address (e.g., "radiod.local" or IP)
         listen_duration: How long to listen for status packets in seconds (default: 2.0)
+        interface: IP address of the network interface to use for multicast reception
+                  (e.g., '192.168.1.100'). Required on multi-homed systems.
+                  If None, uses INADDR_ANY which works on single-homed systems.
         
     Returns:
         Dictionary mapping SSRC to ChannelInfo
@@ -105,7 +112,7 @@ def discover_channels_native(status_address: str, listen_duration: float = 2.0) 
     try:
         # Resolve address and create lightweight socket (no RadiodControl overhead)
         multicast_addr = resolve_multicast_address(status_address, timeout=2.0)
-        status_sock = _create_status_listener_socket(multicast_addr)
+        status_sock = _create_status_listener_socket(multicast_addr, interface)
         
         # Create temporary RadiodControl just to access decoder
         # TODO: Extract decoder into standalone module to avoid this
@@ -294,7 +301,8 @@ def discover_channels_via_control(status_address: str, timeout: float = 30.0) ->
 
 def discover_channels(status_address: str, 
                       listen_duration: float = 2.0,
-                      use_native: bool = True) -> Dict[int, ChannelInfo]:
+                      use_native: bool = True,
+                      interface: Optional[str] = None) -> Dict[int, ChannelInfo]:
     """
     Discover channels using the best available method
     
@@ -305,6 +313,8 @@ def discover_channels(status_address: str,
         status_address: Status multicast address (e.g., "radiod.local")
         listen_duration: Duration to listen for native discovery (default: 2.0 seconds)
         use_native: If True, use native Python listener; if False, use control utility
+        interface: IP address of network interface for multicast (e.g., '192.168.1.100').
+                  Required on multi-homed systems. If None, uses INADDR_ANY (0.0.0.0).
         
     Returns:
         Dictionary mapping SSRC to ChannelInfo
@@ -312,7 +322,7 @@ def discover_channels(status_address: str,
     if use_native:
         try:
             logger.debug("Attempting native channel discovery")
-            channels = discover_channels_native(status_address, listen_duration)
+            channels = discover_channels_native(status_address, listen_duration, interface)
             if channels:
                 return channels
             else:

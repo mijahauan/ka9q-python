@@ -22,6 +22,7 @@ Control radiod channels for any application: AM/FM/SSB radio, WSPR monitoring, S
 ✅ **Zero assumptions** - Works for any SDR application  
 ✅ **Complete API** - All 85+ radiod parameters exposed  
 ✅ **Channel control** - Create, configure, discover channels  
+✅ **Multi-homed support** - Works on systems with multiple network interfaces  
 ✅ **Pure Python** - No compiled dependencies  
 ✅ **Well tested** - Comprehensive test coverage  
 ✅ **Documented** - Comprehensive examples and API reference included  
@@ -94,6 +95,23 @@ from ka9q import discover_channels
 channels = discover_channels("radiod.local")
 for ssrc, info in channels.items():
     print(f"{ssrc}: {info.frequency/1e6:.3f} MHz, {info.preset}, {info.sample_rate} Hz")
+```
+
+### Multi-Homed Systems
+
+For systems with multiple network interfaces, specify which interface to use:
+
+```python
+from ka9q import RadiodControl, discover_channels
+
+# Specify your interface IP address
+my_interface = "192.168.1.100"
+
+# Create control with specific interface
+control = RadiodControl("radiod.local", interface=my_interface)
+
+# Discovery on specific interface
+channels = discover_channels("radiod.local", interface=my_interface)
 ```
 
 ## Documentation
