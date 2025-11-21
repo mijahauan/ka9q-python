@@ -85,11 +85,17 @@ def resolve_multicast_address(address: str, timeout: float = 5.0) -> str:
         logger.debug(f"dns-sd not available: {e}")
     
     # Fallback to getaddrinfo (works everywhere)
+    # Note: getaddrinfo doesn't support timeout, so we set socket default timeout
     try:
-        addr_info = socket.getaddrinfo(address, None, socket.AF_INET, socket.SOCK_DGRAM)
-        resolved = addr_info[0][4][0]
-        logger.debug(f"Resolved via getaddrinfo: {address} -> {resolved}")
-        return resolved
+        old_timeout = socket.getdefaulttimeout()
+        socket.setdefaulttimeout(timeout)
+        try:
+            addr_info = socket.getaddrinfo(address, None, socket.AF_INET, socket.SOCK_DGRAM)
+            resolved = addr_info[0][4][0]
+            logger.debug(f"Resolved via getaddrinfo: {address} -> {resolved}")
+            return resolved
+        finally:
+            socket.setdefaulttimeout(old_timeout)
     except Exception as e:
         raise Exception(f"Failed to resolve {address}: {e}") from e
 

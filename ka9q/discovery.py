@@ -114,13 +114,39 @@ def discover_channels_native(status_address: str, listen_duration: float = 2.0,
         multicast_addr = resolve_multicast_address(status_address, timeout=2.0)
         status_sock = _create_status_listener_socket(multicast_addr, interface)
         
-        # Create temporary RadiodControl just to access decoder
-        # TODO: Extract decoder into standalone module to avoid this
-        temp_control = RadiodControl.__new__(RadiodControl)
-        temp_control.status_mcast_addr = multicast_addr
+        # CRITICAL: Send a poll to radiod to trigger STATUS packet broadcasts
+        # We need to send this BEFORE creating RadiodControl to avoid socket conflicts
+        logger.debug("Sending poll to radiod to trigger STATUS broadcasts")
+        try:
+            import random
+            # Build poll command as control.c does:
+            # Type (1) + COMMAND_TAG (1, 4 bytes) + OUTPUT_SSRC (18, 4 bytes) + EOL (0, 0 bytes)
+            poll_cmd = bytearray([1])  # CMD packet type (STATUS=0, CMD=1)
+            # COMMAND_TAG (tag=1) with random value for tracking
+            poll_cmd.extend([1, 4])  # tag=1 (COMMAND_TAG), length=4
+            tag = random.randint(0, 0xffffffff)
+            poll_cmd.extend(tag.to_bytes(4, 'big'))
+            # OUTPUT_SSRC (tag=18) with value 0xffffffff (poll all channels)
+            poll_cmd.extend([18, 4])  # tag=18 (OUTPUT_SSRC), length=4
+            poll_cmd.extend([0xff, 0xff, 0xff, 0xff])  # SSRC=0xffffffff
+            # EOL marker
+            poll_cmd.extend([0, 0])  # tag=0 (EOL), length=0
+            
+            # Send poll using status_sock directly
+            dest = (multicast_addr, 5006)
+            status_sock.sendto(poll_cmd, dest)
+            logger.debug(f"Poll sent successfully to {dest} (tag={tag})")
+            # Give radiod a moment to respond
+            time.sleep(0.1)
+        except Exception as e:
+            logger.warning(f"Could not send poll (continuing anyway): {e}")
         
         start_time = time.time()
         packet_count = 0
+        
+        # We'll create temp_control lazily only when we need to decode a packet
+        # This avoids opening an extra socket that would compete for multicast packets
+        temp_control = None
         
         while time.time() - start_time < listen_duration:
             # Use remaining time or 0.5s, whichever is smaller (adaptive timeout)
@@ -140,12 +166,17 @@ def discover_channels_native(status_address: str, listen_duration: float = 2.0,
                 logger.debug(f"Error receiving packet: {e}")
                 continue
             
-            # Skip non-status packets (type byte != 0)
-            if len(buffer) == 0 or buffer[0] != 0:
-                logger.debug(f"Skipping non-status packet (type={buffer[0] if buffer else 'empty'})")
+            # Skip non-status packets (STATUS = 0, COMMAND = 1)
+            if len(buffer) == 0 or buffer[0] != 0:  # STATUS packets have type byte == 0
+                logger.debug(f"Skipping non-STATUS packet (type={buffer[0] if buffer else 'empty'})")
                 continue
             
             # Decode status packet using temporary control instance
+            # Create it lazily on first STATUS packet
+            if temp_control is None:
+                logger.debug("Creating RadiodControl for decoding")
+                temp_control = RadiodControl(status_address)
+            
             try:
                 status = temp_control._decode_status_response(buffer)
             except Exception as e:
