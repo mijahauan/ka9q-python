@@ -463,6 +463,20 @@ def decode_int32(data: bytes, length: int) -> int:
     return decode_int(data, length)
 
 
+def decode_int64(data: bytes, length: int) -> int:
+    """
+    Decode a 64-bit integer from TLV response (alias for decode_int)
+    
+    Args:
+        data: Bytes to decode (variable length, big-endian)
+        length: Number of bytes
+        
+    Returns:
+        Integer value (up to 64-bit)
+    """
+    return decode_int(data, length)
+
+
 def decode_float(data: bytes, length: int) -> float:
     """
     Decode a float (float32) from TLV response
@@ -1493,6 +1507,10 @@ class RadiodControl:
             # Decode based on type
             if type_val == StatusType.COMMAND_TAG:
                 status['command_tag'] = decode_int32(data, optlen)
+            elif type_val == StatusType.GPS_TIME:
+                status['gps_time'] = decode_int64(data, optlen)
+            elif type_val == StatusType.RTP_TIMESNAP:
+                status['rtp_timesnap'] = decode_int32(data, optlen)
             elif type_val == StatusType.RADIO_FREQUENCY:
                 status['frequency'] = decode_double(data, optlen)
             elif type_val == StatusType.OUTPUT_SSRC:

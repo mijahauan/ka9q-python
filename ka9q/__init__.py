@@ -31,6 +31,14 @@ from .discovery import (
 )
 from .types import StatusType, Encoding
 from .exceptions import Ka9qError, ConnectionError, CommandError, ValidationError
+from .rtp_recorder import (
+    RTPRecorder,
+    RecorderState,
+    RTPHeader,
+    RecordingMetrics,
+    parse_rtp_header,
+    rtp_to_wallclock
+)
 
 __all__ = [
     'RadiodControl',
@@ -45,4 +53,10 @@ __all__ = [
     'ConnectionError',
     'CommandError',
     'ValidationError',
+    'RTPRecorder',
+    'RecorderState',
+    'RTPHeader',
+    'RecordingMetrics',
+    'parse_rtp_header',
+    'rtp_to_wallclock',
 ]

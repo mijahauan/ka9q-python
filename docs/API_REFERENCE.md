@@ -8,9 +8,10 @@ Complete reference for all public APIs, parameters, and constants.
 
 1. [RadiodControl Class](#radiodcontrol-class)
 2. [Discovery Functions](#discovery-functions)
-3. [Constants](#constants)
-4. [Exceptions](#exceptions)
-5. [Utility Functions](#utility-functions)
+3. [RTP Recording](#rtp-recording)
+4. [Constants](#constants)
+5. [Exceptions](#exceptions)
+6. [Utility Functions](#utility-functions)
 
 ---
 
@@ -729,17 +730,343 @@ for service in services:
 
 ### ChannelInfo Dataclass
 
+**New in v2.4.0**: Added timing fields for RTP synchronization
+
 ```python
 @dataclass
 class ChannelInfo:
-    ssrc: int                   # Channel SSRC
-    preset: str                 # Mode/preset name
-    sample_rate: int            # Sample rate in Hz
-    frequency: float            # Frequency in Hz
-    snr: float                  # Signal-to-noise ratio in dB
-    multicast_address: str      # Destination multicast address
-    port: int                   # Destination port
+    ssrc: int                        # Channel SSRC
+    preset: str                      # Mode/preset name
+    sample_rate: int                 # Sample rate in Hz
+    frequency: float                 # Frequency in Hz
+    snr: float                       # Signal-to-noise ratio in dB
+    multicast_address: str           # Destination multicast address
+    port: int                        # Destination port
+    gps_time: Optional[int] = None   # GPS nanoseconds (timing sync)
+    rtp_timesnap: Optional[int] = None  # RTP timestamp at GPS_TIME
 ```
+
+**Timing Fields** (v2.4.0+):
+- `gps_time`: GPS nanoseconds since GPS epoch when RTP_TIMESNAP was captured
+- `rtp_timesnap`: RTP timestamp value at GPS_TIME moment
+- Used for precise RTP timestamp → wall clock conversion
+- See [RTP Recording](#rtp-recording) for usage
+
+---
+
+## RTP Recording
+
+**New in v2.4.0**
+
+Generic RTP recorder with timing support, state machine, and validation.
+
+### RTPRecorder Class
+
+```python
+RTPRecorder(channel: ChannelInfo,
+            on_packet: Optional[Callable] = None,
+            on_state_change: Optional[Callable] = None,
+            on_recording_start: Optional[Callable] = None,
+            on_recording_stop: Optional[Callable] = None,
+            max_packet_gap: int = 10,
+            resync_threshold: int = 5)
+```
+
+**Parameters:**
+- `channel` (ChannelInfo): Channel with RTP stream details and timing
+- `on_packet` (Callable, optional): `func(header, payload, wallclock_time)` called for each packet
+- `on_state_change` (Callable, optional): `func(old_state, new_state)` called on state changes
+- `on_recording_start` (Callable, optional): `func()` called when recording begins
+- `on_recording_stop` (Callable, optional): `func(metrics)` called when recording ends
+- `max_packet_gap` (int): Max sequence gap before triggering resync (default: 10)
+- `resync_threshold` (int): Good packets needed to recover from resync (default: 5)
+
+**Example:**
+```python
+from ka9q import discover_channels, RTPRecorder
+
+# Get channel
+channels = discover_channels("radiod.local")
+channel = channels[14074000]
+
+# Define callback
+def handle_packet(header, payload, wallclock):
+    print(f"Packet at {wallclock}: {len(payload)} bytes")
+
+# Create recorder
+recorder = RTPRecorder(channel=channel, on_packet=handle_packet)
+
+# Start and record
+recorder.start()              # IDLE → ARMED
+recorder.start_recording()    # ARMED → RECORDING
+time.sleep(60)
+recorder.stop_recording()     # RECORDING → ARMED
+recorder.stop()               # ARMED → IDLE
+```
+
+---
+
+### RTPRecorder Methods
+
+#### `start()`
+
+Start receiving RTP packets (transitions to ARMED state).
+
+```python
+start() → None
+```
+
+#### `stop()`
+
+Stop receiving RTP packets (transitions to IDLE state).
+
+```python
+stop() → None
+```
+
+#### `start_recording()`
+
+Begin recording (transitions from ARMED to RECORDING).
+
+```python
+start_recording() → None
+```
+
+#### `stop_recording()`
+
+Stop recording (transitions back to ARMED).
+
+```python
+stop_recording() → None
+```
+
+#### `get_metrics()`
+
+Get current recording metrics.
+
+```python
+get_metrics() → Dict[str, Any]
+```
+
+**Returns:** Dictionary with keys:
+- `packets_received`: Total packets received
+- `packets_dropped`: Packets dropped due to gaps
+- `packets_out_of_order`: Out of sequence packets
+- `bytes_received`: Total bytes received
+- `sequence_errors`: Sequence validation errors
+- `timestamp_jumps`: Large timestamp discontinuities
+- `state_changes`: Number of state transitions
+- `recording_duration`: Duration in seconds (if recording stopped)
+
+#### `reset_metrics()`
+
+Reset all metrics to zero.
+
+```python
+reset_metrics() → None
+```
+
+---
+
+### RecorderState Enum
+
+```python
+from ka9q import RecorderState
+
+RecorderState.IDLE       # Not recording
+RecorderState.ARMED      # Waiting for trigger
+RecorderState.RECORDING  # Actively recording
+RecorderState.RESYNC     # Lost sync, recovering
+```
+
+**State Machine:**
+```
+        start()           start_recording()
+IDLE ──────────> ARMED ──────────────────> RECORDING
+  ^                ^                            │
+  │                │                            │ (gap > threshold)
+  │                │                            v
+  └── stop() ──────┴────── stop_recording() ─ RESYNC
+                                                 │
+                                                 │ (N good packets)
+                                                 └──────> RECORDING
+```
+
+---
+
+### RTP Timing Functions
+
+#### `parse_rtp_header()`
+
+Parse RTP packet header (RFC 3550).
+
+```python
+parse_rtp_header(data: bytes) → Optional[RTPHeader]
+```
+
+**Parameters:**
+- `data` (bytes): Raw packet bytes (minimum 12 bytes)
+
+**Returns:**
+- `RTPHeader` if valid, None if invalid
+
+**Example:**
+```python
+from ka9q import parse_rtp_header
+
+data = sock.recvfrom(8192)[0]
+header = parse_rtp_header(data)
+if header:
+    print(f"Sequence: {header.sequence}")
+    print(f"Timestamp: {header.timestamp}")
+    print(f"SSRC: {header.ssrc}")
+```
+
+---
+
+#### `rtp_to_wallclock()`
+
+Convert RTP timestamp to Unix wall-clock time.
+
+```python
+rtp_to_wallclock(rtp_timestamp: int, channel: ChannelInfo) → Optional[float]
+```
+
+**Parameters:**
+- `rtp_timestamp` (int): RTP timestamp from packet header
+- `channel` (ChannelInfo): Channel with `gps_time`, `rtp_timesnap`, `sample_rate`
+
+**Returns:**
+- `float`: Unix timestamp (seconds since 1970-01-01) or None if timing unavailable
+
+**Example:**
+```python
+from ka9q import rtp_to_wallclock, parse_rtp_header
+import time
+
+data = sock.recvfrom(8192)[0]
+header = parse_rtp_header(data)
+
+timestamp = rtp_to_wallclock(header.timestamp, channel)
+if timestamp:
+    print(f"Packet time: {time.ctime(timestamp)}")
+```
+
+**Formula:**
+```
+wall_time = gps_time + (rtp_timestamp - rtp_timesnap) / sample_rate
+```
+
+---
+
+### RTPHeader NamedTuple
+
+```python
+from ka9q import RTPHeader
+
+@dataclass
+class RTPHeader:
+    version: int          # RTP version (should be 2)
+    padding: bool         # Padding flag
+    extension: bool       # Extension flag
+    csrc_count: int       # CSRC count
+    marker: bool          # Marker bit
+    payload_type: int     # Payload type
+    sequence: int         # Sequence number (0-65535)
+    timestamp: int        # RTP timestamp
+    ssrc: int             # Synchronization source
+```
+
+---
+
+### RecordingMetrics Dataclass
+
+```python
+from ka9q import RecordingMetrics
+
+@dataclass
+class RecordingMetrics:
+    packets_received: int = 0
+    packets_dropped: int = 0
+    packets_out_of_order: int = 0
+    bytes_received: int = 0
+    sequence_errors: int = 0
+    timestamp_jumps: int = 0
+    state_changes: int = 0
+    recording_start_time: Optional[float] = None
+    recording_stop_time: Optional[float] = None
+    
+    def to_dict() → dict:
+        """Convert to dictionary with calculated fields"""
+```
+
+---
+
+### Complete Recording Example
+
+```python
+from ka9q import (
+    discover_channels,
+    RTPRecorder,
+    RecorderState,
+    RTPHeader,
+    RecordingMetrics
+)
+import time
+
+class MyRecorder:
+    def __init__(self):
+        self.packets = []
+    
+    def on_packet(self, header: RTPHeader, payload: bytes, wallclock: float):
+        """Store packet data"""
+        self.packets.append({
+            'time': wallclock,
+            'sequence': header.sequence,
+            'data': payload
+        })
+    
+    def on_state_change(self, old: RecorderState, new: RecorderState):
+        print(f"State: {old.value} → {new.value}")
+    
+    def on_recording_start(self):
+        print("🔴 Recording started")
+        self.packets = []
+    
+    def on_recording_stop(self, metrics: RecordingMetrics):
+        print(f"⏹️  Recorded {len(self.packets)} packets")
+        print(f"Duration: {metrics.recording_duration:.2f}s")
+
+# Discover channels
+channels = discover_channels("radiod.local")
+channel = channels[14074000]
+
+# Create application and recorder
+app = MyRecorder()
+recorder = RTPRecorder(
+    channel=channel,
+    on_packet=app.on_packet,
+    on_state_change=app.on_state_change,
+    on_recording_start=app.on_recording_start,
+    on_recording_stop=app.on_recording_stop
+)
+
+# Record
+recorder.start()
+recorder.start_recording()
+time.sleep(60)
+recorder.stop_recording()
+recorder.stop()
+
+# Process packets
+for pkt in app.packets:
+    print(f"Packet at {pkt['time']}: {len(pkt['data'])} bytes")
+```
+
+**See also:**
+- `docs/RTP_TIMING_SUPPORT.md` - Detailed timing documentation
+- `examples/rtp_recorder_example.py` - Complete working example
+- `examples/test_timing_fields.py` - Verify timing fields
 
 ---
 

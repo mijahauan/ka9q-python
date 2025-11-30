@@ -22,6 +22,8 @@ Control radiod channels for any application: AM/FM/SSB radio, WSPR monitoring, S
 ✅ **Zero assumptions** - Works for any SDR application  
 ✅ **Complete API** - All 85+ radiod parameters exposed  
 ✅ **Channel control** - Create, configure, discover channels  
+✅ **RTP recording** - Generic recorder with timing support and state machine  
+✅ **Precise timing** - GPS_TIME/RTP_TIMESNAP for accurate timestamps  
 ✅ **Multi-homed support** - Works on systems with multiple network interfaces  
 ✅ **Pure Python** - No compiled dependencies  
 ✅ **Well tested** - Comprehensive test coverage  
@@ -97,6 +99,29 @@ for ssrc, info in channels.items():
     print(f"{ssrc}: {info.frequency/1e6:.3f} MHz, {info.preset}, {info.sample_rate} Hz")
 ```
 
+### Record RTP Stream with Precise Timing
+
+```python
+from ka9q import discover_channels, RTPRecorder
+import time
+
+# Get channel with timing info
+channels = discover_channels("radiod.local")
+channel = channels[14074000]
+
+# Define packet handler
+def handle_packet(header, payload, wallclock):
+    print(f"Packet at {wallclock}: {len(payload)} bytes")
+
+# Create and start recorder
+recorder = RTPRecorder(channel=channel, on_packet=handle_packet)
+recorder.start()
+recorder.start_recording()
+time.sleep(60)  # Record for 60 seconds
+recorder.stop_recording()
+recorder.stop()
+```
+
 ### Multi-Homed Systems
 
 For systems with multiple network interfaces, specify which interface to use:
@@ -119,6 +144,7 @@ channels = discover_channels("radiod.local", interface=my_interface)
 For detailed information, please refer to the documentation in the `docs/` directory:
 
 - **[API Reference](docs/API_REFERENCE.md)**: Full details on all classes, methods, and functions.
+- **[RTP Timing Support](docs/RTP_TIMING_SUPPORT.md)**: Guide to RTP timing and synchronization.
 - **[Architecture](docs/ARCHITECTURE.md)**: Overview of the library's design and structure.
 - **[Installation Guide](docs/INSTALLATION.md)**: Detailed installation instructions.
 - **[Testing Guide](docs/TESTING_GUIDE.md)**: Information on how to run the test suite.
@@ -133,6 +159,8 @@ See the `examples/` directory for complete applications:
 - **`discover_example.py`** - Channel discovery methods (native Python and control utility)
 - **`tune.py`** - Interactive channel tuning utility (Python implementation of ka9q-radio's tune)
 - **`tune_example.py`** - Programmatic examples of using the tune() method
+- **`rtp_recorder_example.py`** - Complete RTP recorder with timing and state machine
+- **`test_timing_fields.py`** - Verify GPS_TIME/RTP_TIMESNAP timing fields
 - **`simple_am_radio.py`** - Minimal AM broadcast listener
 - **`superdarn_recorder.py`** - Ionospheric radar monitoring
 - **`codar_oceanography.py`** - Ocean current radar

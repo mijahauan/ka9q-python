@@ -136,6 +136,29 @@ These are the **essential** commands that both direct and interrogate radiod cha
   - **tune.c**: ✅ Yes
   - **Status**: Fully implemented
 
+#### RTP Timing & Recording (NEW in v2.4.0)
+- ✅ `GPS_TIME` - GPS nanoseconds for timing sync
+  - **Method**: `discover_channels()` (returns in ChannelInfo)
+  - **tune.c**: ❌ No (pcmrecord.c only)
+  - **Status**: **✨ NEWLY IMPLEMENTED** (Nov 2024)
+
+- ✅ `RTP_TIMESNAP` - RTP timestamp at GPS_TIME
+  - **Method**: `discover_channels()` (returns in ChannelInfo)
+  - **tune.c**: ❌ No (pcmrecord.c only)
+  - **Status**: **✨ NEWLY IMPLEMENTED** (Nov 2024)
+
+- ✅ `RTPRecorder` - Generic RTP recorder with state machine
+  - **Method**: `RTPRecorder()` class
+  - **pcmrecord.c**: Inspired by
+  - **Status**: **✨ NEWLY IMPLEMENTED** (Nov 2024)
+  - **Features**:
+    - State machine (IDLE → ARMED → RECORDING → RESYNC)
+    - Precise timing conversion (RTP → wall clock)
+    - Sequence number validation
+    - Automatic resynchronization
+    - Metrics tracking
+    - Callback architecture
+
 ### ❌ Not Implemented (from control.c only)
 
 These commands exist in the interactive `control` utility but not in `tune.c` or ka9q-python:
@@ -252,9 +275,25 @@ These commands exist in the interactive `control` utility but not in `tune.c` or
 | **AGC & Gain** | ✅ | ✅ | Perfect match |
 | **Output config** | ✅ | ✅ | Perfect match |
 | **Status query** | ✅ | ✅ | Perfect match |
-| **RTP destination** | ✅ | ✅ | **NEW!** Perfect match |
+| **RTP destination** | ✅ | ✅ | Perfect match |
 
 **Verdict**: ka9q-python is a **complete superset** of `tune.c` functionality.
+
+## Comparison: pcmrecord.c vs ka9q-python
+
+| Category | pcmrecord.c | ka9q-python | Status |
+|----------|-------------|-------------|--------|
+| **GPS_TIME parsing** | ✅ | ✅ | Perfect match |
+| **RTP_TIMESNAP parsing** | ✅ | ✅ | Perfect match |
+| **RTP timing conversion** | ✅ | ✅ | Perfect match |
+| **RTP header parsing** | ✅ | ✅ | Perfect match |
+| **Sequence validation** | ✅ | ✅ | Enhanced |
+| **State machine** | ❌ | ✅ | **NEW!** |
+| **Resync logic** | ❌ | ✅ | **NEW!** |
+| **Metrics tracking** | ❌ | ✅ | **NEW!** |
+| **Callback architecture** | ❌ | ✅ | **NEW!** |
+
+**Verdict**: ka9q-python provides **complete timing support** from `pcmrecord.c` plus additional state management and error recovery.
 
 ## Comparison: control.c vs ka9q-python
 
@@ -354,7 +393,7 @@ def set_spectrum(self, ssrc: int, crossover: float = None,
 
 ## Conclusion
 
-**ka9q-python fully implements all commands used by tune.c to direct and interrogate radiod.**
+**ka9q-python fully implements all commands used by tune.c to direct and interrogate radiod, plus RTP timing from pcmrecord.c.**
 
 The library provides:
 - ✅ Complete frequency control
@@ -362,9 +401,44 @@ The library provides:
 - ✅ Complete filter control (including Kaiser beta)
 - ✅ Complete AGC control (all 5 parameters)
 - ✅ Complete gain control (manual, RF gain, RF atten)
-- ✅ Complete output control (sample rate, encoding, **destination**)
+- ✅ Complete output control (sample rate, encoding, destination)
 - ✅ Complete status interrogation (frequency, mode, filters, gain, noise, power, SNR)
+- ✅ **Complete RTP timing support** (GPS_TIME, RTP_TIMESNAP, timestamp conversion)
+- ✅ **Generic RTP recorder** (state machine, validation, resync, metrics)
 
 Additional features from the interactive `control.c` utility are available for implementation but are not essential for programmatic control and automation, which is ka9q-python's primary use case.
 
-**Recommendation**: ka9q-python is **production-ready** for automated radiod control. Advanced features can be added incrementally based on actual user needs.
+**Recommendation**: ka9q-python is **production-ready** for automated radiod control and RTP recording. Advanced features can be added incrementally based on actual user needs.
+
+## What's New in v2.4.0
+
+### RTP Timing & Recording
+
+**GPS_TIME and RTP_TIMESNAP Support**:
+- Decodes timing fields from radiod status packets
+- Enables precise RTP timestamp → wall clock conversion
+- Matches pcmrecord.c timing mechanism
+- Optional fields in ChannelInfo dataclass
+
+**Generic RTP Recorder**:
+- `RTPRecorder` class with callback architecture
+- State machine: IDLE → ARMED → RECORDING → RESYNC
+- Automatic resynchronization on packet loss
+- Comprehensive metrics tracking
+- RTP header parsing (RFC 3550)
+- Sequence number validation
+- Timestamp jump detection
+
+**New Functions**:
+- `parse_rtp_header()` - Parse RTP packets
+- `rtp_to_wallclock()` - Convert RTP timestamps
+- `decode_int64()` - Decode 64-bit GPS time
+
+**Examples**:
+- `examples/test_timing_fields.py` - Verify timing capture
+- `examples/rtp_recorder_example.py` - Full recorder demo
+
+**Documentation**:
+- `docs/RTP_TIMING_SUPPORT.md` - User guide
+- `docs/RTP_TIMING_IMPLEMENTATION.md` - Technical details
+- Updated API reference with full RTP section
