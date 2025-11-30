@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased] - 2025-11-29
+## [2.4.0] - 2025-11-29
 
 ### Added - RTP Destination Control
 - **`encode_socket()` function** in `ka9q/control.py`
