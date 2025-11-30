@@ -1,5 +1,34 @@
 # Changelog
 
+## [2.5.0] - 2025-11-30
+
+### Added - RTP Recorder Enhancement
+- **`pass_all_packets` parameter** in `RTPRecorder.__init__()`
+  - Allows bypassing internal packet resequencing logic
+  - When `True`, passes ALL packets to callback regardless of sequence gaps
+  - Metrics still track sequence errors, dropped packets, and timestamp jumps
+  - Designed for applications with external resequencers (e.g., signal-recorder's PacketResequencer)
+  - `max_packet_gap` parameter ignored when `pass_all_packets=True`
+  - No resync state transitions - stays in RECORDING mode continuously
+
+- **Updated `_validate_packet()` method** in `RTPRecorder`
+  - Conditional resync triggering based on `pass_all_packets` flag
+  - Metrics tracking independent of pass-through mode
+  - Early return for pass-all mode to bypass resync state handling
+  - Preserves original behavior when `pass_all_packets=False` (default)
+
+### Documentation
+- **API Reference** - Added `pass_all_packets` parameter documentation
+  - Added example showing external resequencer usage
+  - Updated parameter descriptions
+
+- **Implementation Guide** - Usage patterns for external resequencing
+
+### Backward Compatibility
+100% backward compatible - `pass_all_packets` defaults to `False`, preserving existing behavior.
+
+---
+
 ## [2.4.0] - 2025-11-29
 
 ### Added - RTP Destination Control

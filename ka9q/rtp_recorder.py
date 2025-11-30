@@ -175,7 +175,8 @@ class RTPRecorder:
         on_recording_start: Optional[Callable[[], None]] = None,
         on_recording_stop: Optional[Callable[[RecordingMetrics], None]] = None,
         max_packet_gap: int = 10,
-        resync_threshold: int = 5
+        resync_threshold: int = 5,
+        pass_all_packets: bool = False
     ):
         """
         Initialize RTP recorder
@@ -186,8 +187,10 @@ class RTPRecorder:
             on_state_change: Callback(old_state, new_state) on state changes
             on_recording_start: Callback when recording begins
             on_recording_stop: Callback(metrics) when recording ends
-            max_packet_gap: Max sequence gap before triggering resync
+            max_packet_gap: Max sequence gap before triggering resync (ignored if pass_all_packets=True)
             resync_threshold: Number of good packets needed to recover from resync
+            pass_all_packets: If True, pass ALL packets to callback regardless of sequence.
+                             Metrics still track errors. Use when downstream has its own resequencer.
         """
         self.channel = channel
         self.on_packet = on_packet
@@ -197,6 +200,7 @@ class RTPRecorder:
         
         self.max_packet_gap = max_packet_gap
         self.resync_threshold = resync_threshold
+        self.pass_all_packets = pass_all_packets
         
         self.state = RecorderState.IDLE
         self.metrics = RecordingMetrics()
@@ -277,7 +281,7 @@ class RTPRecorder:
         Returns:
             True if packet should be processed, False if dropped
         """
-        # Check SSRC
+        # Check SSRC - always filter wrong SSRC
         if header.ssrc != self.channel.ssrc:
             logger.debug(f"Wrong SSRC: {header.ssrc} (expected {self.channel.ssrc})")
             return False
@@ -288,7 +292,7 @@ class RTPRecorder:
             self.last_timestamp = header.timestamp
             return True
         
-        # Check sequence number
+        # Check sequence number (track metrics even in pass_all mode)
         expected_seq = (self.last_sequence + 1) & 0xFFFF
         if header.sequence != expected_seq:
             seq_gap = (header.sequence - expected_seq) & 0xFFFF
@@ -300,11 +304,13 @@ class RTPRecorder:
                 )
                 self.metrics.sequence_errors += 1
                 
-                # Trigger resync if recording
-                if self.state == RecorderState.RECORDING:
-                    self._change_state(RecorderState.RESYNC)
-                    self.resync_good_packets = 0
-                    return False
+                # In pass_all mode, don't trigger resync - just log and continue
+                if not self.pass_all_packets:
+                    # Trigger resync if recording
+                    if self.state == RecorderState.RECORDING:
+                        self._change_state(RecorderState.RESYNC)
+                        self.resync_good_packets = 0
+                        return False
             else:
                 self.metrics.packets_dropped += seq_gap - 1
         
@@ -323,7 +329,11 @@ class RTPRecorder:
         self.last_sequence = header.sequence
         self.last_timestamp = header.timestamp
         
-        # Handle resync state
+        # In pass_all mode, skip resync state handling - always deliver
+        if self.pass_all_packets:
+            return True
+        
+        # Handle resync state (original behavior)
         if self.state == RecorderState.RESYNC:
             self.resync_good_packets += 1
             if self.resync_good_packets >= self.resync_threshold:

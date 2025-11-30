@@ -769,7 +769,8 @@ RTPRecorder(channel: ChannelInfo,
             on_recording_start: Optional[Callable] = None,
             on_recording_stop: Optional[Callable] = None,
             max_packet_gap: int = 10,
-            resync_threshold: int = 5)
+            resync_threshold: int = 5,
+            pass_all_packets: bool = False)
 ```
 
 **Parameters:**
@@ -778,8 +779,9 @@ RTPRecorder(channel: ChannelInfo,
 - `on_state_change` (Callable, optional): `func(old_state, new_state)` called on state changes
 - `on_recording_start` (Callable, optional): `func()` called when recording begins
 - `on_recording_stop` (Callable, optional): `func(metrics)` called when recording ends
-- `max_packet_gap` (int): Max sequence gap before triggering resync (default: 10)
+- `max_packet_gap` (int): Max sequence gap before triggering resync (default: 10, ignored if `pass_all_packets=True`)
 - `resync_threshold` (int): Good packets needed to recover from resync (default: 5)
+- `pass_all_packets` (bool): If True, pass ALL packets to callback regardless of sequence errors (default: False). Metrics still track errors. Use when downstream has its own resequencer.
 
 **Example:**
 ```python
@@ -803,6 +805,22 @@ time.sleep(60)
 recorder.stop_recording()     # RECORDING → ARMED
 recorder.stop()               # ARMED → IDLE
 ```
+
+**Example with External Resequencer:**
+```python
+# When using external packet resequencing (e.g., PacketResequencer),
+# pass all packets and let downstream handle ordering
+recorder = RTPRecorder(
+    channel=channel,
+    on_packet=my_resequencer.add_packet,
+    pass_all_packets=True  # Bypass internal resync, pass all packets
+)
+
+# Now all packets (regardless of sequence gaps) are delivered to callback
+# Metrics still track sequence_errors and packets_dropped for monitoring
+```
+
+**New in v2.5.0**: `pass_all_packets` parameter for external resequencing
 
 ---
 
