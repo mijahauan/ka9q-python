@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>radiod Control Panel</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header>
+            <h1>📻 radiod Control Panel</h1>
+            <div class="controls">
+                <div class="control-group">
+                    <label for="radiod-select">radiod Instance:</label>
+                    <select id="radiod-select" disabled>
+                        <option value="">Discovering...</option>
+                    </select>
+                    <button id="refresh-btn" class="btn btn-small">🔄 Refresh</button>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content Area -->
+        <main>
+            <!-- Left Sidebar: Channel List -->
+            <aside class="sidebar">
+                <h2>Channels</h2>
+                <div id="channel-list" class="channel-list">
+                    <div class="empty-state">
+                        <p>Select a radiod instance to view channels</p>
+                    </div>
+                </div>
+            </aside>
+
+            <!-- Right Panel: Channel Details -->
+            <section class="detail-panel">
+                <div id="channel-detail" class="channel-detail">
+                    <div class="empty-state">
+                        <h2>No Channel Selected</h2>
+                        <p>Select a channel from the list to view details</p>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- Status Bar -->
+        <footer>
+            <div id="status-bar" class="status-bar">
+                Ready
+            </div>
+        </footer>
+    </div>
+
+    <!-- Channel Detail Template -->
+    <template id="channel-detail-template">
+        <div class="detail-header">
+            <h2>Channel <span class="ssrc-value"></span></h2>
+            <button class="btn btn-small close-btn">✕ Close</button>
+        </div>
+        
+        <div class="detail-content">
+            <!-- 4-column grid layout -->
+            <div class="sections-grid">
+                <!-- Column 1: Tuning -->
+                <div class="section">
+                    <h3>Tuning</h3>
+                    <div class="info-list">
+                        <div class="info-item">
+                            <label>Frequency:</label>
+                            <span class="value freq-value"></span>
+                        </div>
+                        <div class="info-item">
+                            <label>Mode:</label>
+                            <span class="value preset-value"></span>
+                        </div>
+                        <div class="info-item">
+                            <label>SSRC:</label>
+                            <span class="value ssrc-detail-value"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Column 2: Filter -->
+                <div class="section">
+                    <h3>Filter</h3>
+                    <div class="info-list">
+                        <div class="info-item">
+                            <label>Low Edge:</label>
+                            <span class="value low-edge-value"></span>
+                        </div>
+                        <div class="info-item">
+                            <label>High Edge:</label>
+                            <span class="value high-edge-value"></span>
+                        </div>
+                        <div class="info-item">
+                            <label>Bandwidth:</label>
+                            <span class="value bandwidth-value"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Column 3: Output -->
+                <div class="section">
+                    <h3>Output</h3>
+                    <div class="info-list">
+                        <div class="info-item">
+                            <label>Sample Rate:</label>
+                            <span class="value samprate-value"></span>
+                        </div>
+                        <div class="info-item">
+                            <label>Encoding:</label>
+                            <span class="value encoding-value"></span>
+                        </div>
+                        <div class="info-item">
+                            <label>Destination:</label>
+                            <span class="value destination-value"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Column 4: Signal -->
+                <div class="section">
+                    <h3>Signal</h3>
+                    <div class="info-list">
+                        <div class="info-item">
+                            <label>SNR:</label>
+                            <span class="value snr-value"></span>
+                        </div>
+                        <div class="info-item">
+                            <label>BB Power:</label>
+                            <span class="value baseband-value"></span>
+                        </div>
+                        <div class="info-item">
+                            <label>Noise:</label>
+                            <span class="value noise-value"></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Second row: Gain & AGC (spans full width) -->
+            <div class="section section-full">
+                <h3>Gain & AGC</h3>
+                <div class="info-grid">
+                    <div class="info-item">
+                        <label>AGC:</label>
+                        <span class="value agc-value"></span>
+                    </div>
+                    <div class="info-item">
+                        <label>Channel Gain:</label>
+                        <span class="value gain-value"></span>
+                    </div>
+                    <div class="info-item">
+                        <label>RF Gain:</label>
+                        <span class="value rf-gain-value"></span>
+                    </div>
+                    <div class="info-item">
+                        <label>RF Atten:</label>
+                        <span class="value rf-atten-value"></span>
+                    </div>
+                    <div class="info-item">
+                        <label>RF AGC:</label>
+                        <span class="value rf-agc-value"></span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Auto-refresh indicator -->
+            <div class="refresh-indicator">
+                <span class="refresh-dot"></span>
+                Auto-refreshing every 1s
+            </div>
+        </div>
+    </template>
+
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

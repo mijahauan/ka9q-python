@@ -419,7 +419,8 @@ def discover_radiod_services():
     import subprocess
     import re
     
-    services = []
+    # Use dict to automatically deduplicate by address
+    services_dict = {}
     try:
         result = subprocess.run(
             ["avahi-browse", "-t", "_ka9q-ctl._udp", "-p", "-r"],
@@ -434,9 +435,12 @@ def discover_radiod_services():
                 if len(parts) >= 8:
                     name = parts[3]
                     address = parts[7]
-                    services.append({"name": name, "address": address})
+                    # Use address as key to deduplicate
+                    services_dict[address] = {"name": name, "address": address}
     except Exception as e:
         logger.warning(f"Failed to discover radiod services: {e}")
     
+    # Convert dict back to list, sorted by name for consistency
+    services = sorted(services_dict.values(), key=lambda x: x['name'])
     return services
 

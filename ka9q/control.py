@@ -165,6 +165,34 @@ def _validate_string_param(value: str, param_name: str, max_length: int = 256) -
         raise ValidationError(f"{param_name} contains control characters")
 
 
+def _validate_multicast_address(address: str) -> None:
+    """
+    Validate multicast address format
+    
+    Args:
+        address: Multicast address (IP or hostname)
+        
+    Raises:
+        ValidationError: If address format is invalid
+    """
+    if not isinstance(address, str):
+        raise ValidationError(f"Multicast address must be a string, got {type(address).__name__}")
+    if not address:
+        raise ValidationError("Multicast address cannot be empty")
+    
+    # Try to parse as IP address
+    try:
+        # Simple validation - socket.inet_aton will catch malformed addresses
+        socket.inet_aton(address)
+    except OSError:
+        # Not a valid IP, could be hostname - allow it
+        # radiod will resolve it or hash it to generate multicast address
+        if len(address) > 255:
+            raise ValidationError(f"Hostname too long: {len(address)} chars (max 255)")
+        if '\x00' in address:
+            raise ValidationError("Multicast address contains null bytes")
+
+
 def encode_int64(buf: bytearray, type_val: int, x: int) -> int:
     """
     Encode a 64-bit integer in TLV format
@@ -317,6 +345,58 @@ def encode_string(buf: bytearray, type_val: int, s: str) -> int:
     
     buf.extend(s_bytes)
     return 2 + length
+
+
+def encode_socket(buf: bytearray, type_val: int, address: str, port: int = 5004) -> int:
+    """
+    Encode a socket address (IPv4) in TLV format
+    
+    Format matches radiod's decode_socket expectations:
+    - Address: 4 bytes (IPv4 address in network order)
+    - Port: 2 bytes (big-endian)
+    Total: 6 bytes for IPv4
+    
+    Note: Family (AF_INET/AF_INET6) is inferred from length by radiod:
+    - length 6 = IPv4
+    - length 10 = IPv6 (not currently supported)
+    
+    Args:
+        buf: Buffer to write to
+        type_val: TLV type identifier
+        address: IP address as string (e.g., "239.1.2.3")
+        port: Port number (default: 5004 for RTP)
+        
+    Returns:
+        Number of bytes written (8 = type + length + 6 bytes data)
+        
+    Raises:
+        ValidationError: If address format is invalid
+        
+    Example:
+        >>> buf = bytearray()
+        >>> encode_socket(buf, StatusType.OUTPUT_DATA_DEST_SOCKET, "239.1.2.3", 5004)
+        8
+    """
+    buf.append(type_val)
+    
+    # Encode the socket address
+    try:
+        # Convert string IP to 4 bytes (already in network order)
+        addr_bytes = socket.inet_aton(address)
+    except OSError as e:
+        raise ValidationError(f"Invalid IP address '{address}': {e}")
+    
+    # Validate port range
+    if not (0 <= port <= 65535):
+        raise ValidationError(f"Invalid port {port} (must be 0-65535)")
+    
+    # Format: address(4 bytes) + port(2 bytes, network order)
+    # This matches radiod's decode_socket() expectations
+    buf.append(6)  # length for IPv4
+    buf.extend(addr_bytes)  # 4 bytes address (already in network order from inet_aton)
+    buf.extend(struct.pack('>H', port))  # 2 bytes port (big-endian)
+    
+    return 2 + 6  # type + length + data
 
 
 def encode_eol(buf: bytearray) -> int:
@@ -926,30 +1006,34 @@ class RadiodControl:
     
     def create_channel(self, ssrc: int, frequency_hz: float, 
                        preset: str = "iq", sample_rate: Optional[int] = None,
-                       agc_enable: int = 0, gain: float = 0.0):
+                       agc_enable: int = 0, gain: float = 0.0,
+                       destination: Optional[str] = None):
         """
-        Create and configure a new radiod channel
+        Create a new channel with specified configuration
         
-        This sends all parameters in a single packet to radiod, which creates
-        the channel when it receives the first command for a new SSRC.
+        Creates and configures a radiod channel with a single command packet,
+        ensuring all parameters are set together atomically.
         
         Args:
-            ssrc: Channel identifier (0 to 4294967295). Convention is to use
-                  frequency in Hz as SSRC (e.g., 14074000 for 14.074 MHz)
-            frequency_hz: RF frequency in Hz (typically 0 to 6 GHz for HF/VHF/UHF,
-                         depends on your SDR hardware)
-            preset: Demodulation mode (default: "iq" for linear/IQ mode)
-                    Common values: "iq", "usb", "lsb", "am", "fm", "cw"
-            sample_rate: Output sample rate in Hz (optional, radiod uses default if None)
-                        Typical values: 12000, 48000, 16000
-            agc_enable: Automatic Gain Control (0=disabled/manual gain, 1=enabled)
-                       Default: 0 (manual gain mode)
-            gain: Manual gain in dB, used when agc_enable=0 (default: 0.0)
-                  Typical range: -60 to +60 dB
+            ssrc: SSRC (channel identifier), typically derived from frequency (Hz -> kHz)
+            frequency_hz: Tuning frequency in Hz
+            preset: Mode/preset name (default: "iq"). Common values:
+                   - "iq": Raw IQ output (no demodulation)
+                   - "usb": Upper sideband
+                   - "lsb": Lower sideband
+                   - "am": Amplitude modulation
+                   - "fm": Frequency modulation
+                   - "cw": Morse code
+            sample_rate: Output sample rate in Hz (optional, uses radiod default if not set)
+            agc_enable: Enable automatic gain control (0=off, 1=on, default: 0)
+            gain: Manual gain in dB (default: 0.0). Only used when agc_enable=0
+            destination: RTP destination multicast address (optional). Format: "address" or "address:port"
+                        Examples: "239.1.2.3", "wspr.local", "239.1.2.3:5004"
+                        If not specified, uses radiod's default from config file.
         
         Raises:
-            ValidationError: If parameters are out of valid ranges
             CommandError: If command fails to send
+            ValidationError: If parameters are invalid
             RuntimeError: If not connected to radiod
         
         Example:
@@ -1003,6 +1087,24 @@ class RadiodControl:
         # Gain setting
         encode_double(cmdbuffer, StatusType.GAIN, gain)
         logger.info(f"Setting GAIN for SSRC {ssrc} to {gain} dB")
+        
+        # Destination address (if specified)
+        if destination is not None:
+            _validate_multicast_address(destination)
+            dest_addr = destination
+            dest_port = 5004  # Default RTP port
+            
+            # Check if port is specified in format "address:port"
+            if ':' in destination:
+                parts = destination.rsplit(':', 1)
+                dest_addr = parts[0]
+                try:
+                    dest_port = int(parts[1])
+                except ValueError:
+                    raise ValidationError(f"Invalid port in destination '{destination}'")
+            
+            encode_socket(cmdbuffer, StatusType.OUTPUT_DATA_DEST_SOCKET, dest_addr, dest_port)
+            logger.info(f"Setting destination for SSRC {ssrc} to {dest_addr}:{dest_port}")
         
         # SSRC and command tag
         encode_int(cmdbuffer, StatusType.OUTPUT_SSRC, ssrc)
@@ -1257,8 +1359,23 @@ class RadiodControl:
             encode_float(cmdbuffer, StatusType.RF_ATTEN, rf_atten)
         
         if destination is not None:
-            # Parse destination address (simplified - would need full socket encoding)
-            logger.warning("Destination socket encoding not fully implemented")
+            _validate_multicast_address(destination)
+            # Parse destination - could be IP address or hostname
+            # If it's a hostname, try to resolve it; if not, use it as-is (radiod will handle it)
+            dest_addr = destination
+            dest_port = 5004  # Default RTP port
+            
+            # Check if port is specified in format "address:port"
+            if ':' in destination:
+                parts = destination.rsplit(':', 1)
+                dest_addr = parts[0]
+                try:
+                    dest_port = int(parts[1])
+                except ValueError:
+                    raise ValidationError(f"Invalid port in destination '{destination}'")
+            
+            encode_socket(cmdbuffer, StatusType.OUTPUT_DATA_DEST_SOCKET, dest_addr, dest_port)
+            logger.info(f"Setting destination for SSRC {ssrc} to {dest_addr}:{dest_port}")
         
         encode_eol(cmdbuffer)
         
