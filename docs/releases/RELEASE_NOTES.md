@@ -1,7 +1,27 @@
-# Release Notes - Version 1.0.0 (Performance Update)
+# ka9q-python Release Notes
+
+**Latest Version:** 2.4.0 (November 29, 2025)  
+**Status:** Production Ready
+
+## Latest Release
+
+For the most recent release information, see:
+- **[Release Notes v2.4.0](RELEASE_NOTES_v2.4.0.md)** - RTP Destination Control + Web UI
+
+## All Releases
+
+- **[v2.4.0](RELEASE_NOTES_v2.4.0.md)** (Nov 29, 2025) - RTP Destination Control + Web UI
+- **[v2.3.0](RELEASE_NOTES_v2.3.0.md)** (Nov 21, 2025) - Multi-Homed System Support
+- **[v2.2.0](RELEASE_NOTES_v2.2.0.md)** (Nov 15, 2025) - Enhanced Discovery & Performance
+- **[v2.1.0](RELEASE_NOTES_v2.1.0.md)** (Nov 10, 2025) - Native Discovery
+- **v1.0.0** (Nov 3, 2025) - Performance Update (see below)
+
+---
+
+# Version 1.0.0 (Performance Update)
 
 **Date:** November 3, 2025  
-**Status:** Ready for Production
+**Status:** Legacy
 
 ## Summary
 
@@ -187,14 +207,33 @@ Include:
 
 ## Version History
 
+### 2.4.0 (November 29, 2025) - RTP Destination Control + Web UI
+- Per-channel RTP destination control
+- Complete web-based monitoring interface
+- Discovery deduplication fixes
+- Comprehensive documentation
+- See [RELEASE_NOTES_v2.4.0.md](RELEASE_NOTES_v2.4.0.md)
+
+### 2.3.0 (November 21, 2025) - Multi-Homed System Support
+- Interface parameter for multi-homed systems
+- Enhanced multicast control
+- See [RELEASE_NOTES_v2.3.0.md](RELEASE_NOTES_v2.3.0.md)
+
+### 2.2.0 (November 15, 2025) - Enhanced Discovery & Performance
+- Improved discovery mechanisms
+- Performance optimizations
+- See [RELEASE_NOTES_v2.2.0.md](RELEASE_NOTES_v2.2.0.md)
+
+### 2.1.0 (November 10, 2025) - Native Discovery
+- Native Python discovery
+- Cross-platform support
+- See [RELEASE_NOTES_v2.1.0.md](RELEASE_NOTES_v2.1.0.md)
+
 ### 1.0.0 (November 3, 2025) - Performance Update
 - Major performance improvements (5-10x faster)
 - Critical bug fix (SNR division by zero)
 - Comprehensive testing and documentation
 - Production ready
-
-### Previous Versions
-- See git history for earlier development
 
 ---
 
