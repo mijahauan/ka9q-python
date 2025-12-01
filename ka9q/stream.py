@@ -123,7 +123,11 @@ class RadiodStream:
         # Initialize quality tracking
         self.quality = StreamQuality(
             stream_start_utc=datetime.now(timezone.utc).isoformat(),
+            sample_rate=self.channel.sample_rate,
         )
+        
+        # Track first RTP timestamp
+        self._first_rtp_timestamp: Optional[int] = None
         
         # Reset resequencer
         self.resequencer.reset()
@@ -238,6 +242,12 @@ class RadiodStream:
         
         # Update RTP stats
         self.quality.rtp_packets_received += 1
+        
+        # Track first and last RTP timestamps
+        if self._first_rtp_timestamp is None:
+            self._first_rtp_timestamp = header.timestamp
+            self.quality.first_rtp_timestamp = header.timestamp
+        self.quality.last_rtp_timestamp = header.timestamp
         
         # Extract payload
         header_len = 12 + (4 * header.csrc_count)

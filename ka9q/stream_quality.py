@@ -135,6 +135,16 @@ class StreamQuality:
     last_packet_utc: str = ""
     """ISO format timestamp of most recent packet"""
     
+    # === RTP timing (for applications needing precise timing) ===
+    first_rtp_timestamp: int = 0
+    """RTP timestamp of first packet received"""
+    
+    last_rtp_timestamp: int = 0
+    """RTP timestamp of most recent packet"""
+    
+    sample_rate: int = 0
+    """Sample rate in Hz (for RTP timestamp conversion)"""
+    
     @property
     def completeness_pct(self) -> float:
         """Percentage of expected samples that were actually received (not gap-filled)"""
@@ -174,6 +184,11 @@ class StreamQuality:
             # Timing
             'stream_start_utc': self.stream_start_utc,
             'last_packet_utc': self.last_packet_utc,
+            
+            # RTP timing
+            'first_rtp_timestamp': self.first_rtp_timestamp,
+            'last_rtp_timestamp': self.last_rtp_timestamp,
+            'sample_rate': self.sample_rate,
         }
     
     def copy(self) -> 'StreamQuality':
@@ -194,4 +209,7 @@ class StreamQuality:
             rtp_packets_resequenced=self.rtp_packets_resequenced,
             stream_start_utc=self.stream_start_utc,
             last_packet_utc=self.last_packet_utc,
+            first_rtp_timestamp=self.first_rtp_timestamp,
+            last_rtp_timestamp=self.last_rtp_timestamp,
+            sample_rate=self.sample_rate,
         )
