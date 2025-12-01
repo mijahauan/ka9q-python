@@ -12,7 +12,7 @@ long_description = readme.read_text() if readme.exists() else ''
 
 setup(
     name='ka9q',
-    version='2.5.0',
+    version='3.0.0',
     description='Python interface for ka9q-radio control and monitoring',
     long_description=long_description,
     long_description_content_type='text/markdown',

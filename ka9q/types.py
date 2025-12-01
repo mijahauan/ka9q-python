@@ -104,7 +104,7 @@ class StatusType:
     FILTER2_BLOCKSIZE = 73
     FILTER2_FIR_LENGTH = 74
     FILTER2_KAISER_BETA = 75
-    UNUSED16 = 76
+    SPECTRUM_FFT_N = 76
     
     FILTER_DROPS = 77
     LOCK = 78
@@ -124,11 +124,11 @@ class StatusType:
     THRESH_EXTEND = 90
     
     # Spectral analysis
-    UNUSED20 = 91
+    SPECTRUM_KAISER_BETA = 91
     COHERENT_BIN_SPACING = 92
     NONCOHERENT_BIN_BW = 93
     BIN_COUNT = 94
-    UNUSED21 = 95
+    CROSSOVER = 95
     BIN_DATA = 96
     
     RF_ATTEN = 97

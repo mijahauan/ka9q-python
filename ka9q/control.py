@@ -1592,6 +1592,586 @@ class RadiodControl:
         self.metrics = Metrics()
         logger.info("Metrics reset")
     
+    def set_doppler(self, ssrc: int, doppler_hz: float = 0.0, doppler_rate_hz_per_sec: float = 0.0):
+        """
+        Set Doppler frequency shift and rate for satellite tracking
+        
+        Args:
+            ssrc: SSRC of the channel
+            doppler_hz: Doppler frequency shift in Hz (default: 0.0)
+            doppler_rate_hz_per_sec: Doppler rate in Hz/sec (default: 0.0)
+        
+        Example:
+            >>> # Track satellite with 5 kHz Doppler shift, changing at 100 Hz/sec
+            >>> control.set_doppler(ssrc=12345, doppler_hz=5000, doppler_rate_hz_per_sec=100)
+        """
+        _validate_ssrc(ssrc)
+        
+        cmdbuffer = bytearray()
+        cmdbuffer.append(CMD)
+        
+        encode_double(cmdbuffer, StatusType.DOPPLER_FREQUENCY, doppler_hz)
+        encode_double(cmdbuffer, StatusType.DOPPLER_FREQUENCY_RATE, doppler_rate_hz_per_sec)
+        encode_int(cmdbuffer, StatusType.OUTPUT_SSRC, ssrc)
+        encode_int(cmdbuffer, StatusType.COMMAND_TAG, secrets.randbits(31))
+        encode_eol(cmdbuffer)
+        
+        logger.info(f"Setting Doppler for SSRC {ssrc}: freq={doppler_hz} Hz, rate={doppler_rate_hz_per_sec} Hz/s")
+        self.send_command(cmdbuffer)
+    
+    def set_pll(self, ssrc: int, enable: bool, bandwidth_hz: Optional[float] = None, square: bool = False):
+        """
+        Configure PLL (Phase-Locked Loop) for carrier tracking in linear modes
+        
+        Args:
+            ssrc: SSRC of the channel
+            enable: Enable PLL carrier tracking
+            bandwidth_hz: PLL loop bandwidth in Hz (optional, default depends on mode)
+            square: Enable squaring loop for suppressed carrier reception (default: False)
+        
+        Example:
+            >>> # Enable PLL for coherent AM reception
+            >>> control.set_pll(ssrc=12345, enable=True, bandwidth_hz=50)
+            >>> # Enable squaring PLL for DSB-SC (suppressed carrier)
+            >>> control.set_pll(ssrc=12345, enable=True, square=True, bandwidth_hz=20)
+        """
+        _validate_ssrc(ssrc)
+        
+        cmdbuffer = bytearray()
+        cmdbuffer.append(CMD)
+        
+        encode_int(cmdbuffer, StatusType.PLL_ENABLE, 1 if enable else 0)
+        if bandwidth_hz is not None:
+            _validate_positive(bandwidth_hz, "PLL bandwidth")
+            encode_float(cmdbuffer, StatusType.PLL_BW, bandwidth_hz)
+        if square:
+            encode_int(cmdbuffer, StatusType.PLL_SQUARE, 1)
+        
+        encode_int(cmdbuffer, StatusType.OUTPUT_SSRC, ssrc)
+        encode_int(cmdbuffer, StatusType.COMMAND_TAG, secrets.randbits(31))
+        encode_eol(cmdbuffer)
+        
+        logger.info(f"Setting PLL for SSRC {ssrc}: enable={enable}, bw={bandwidth_hz} Hz, square={square}")
+        self.send_command(cmdbuffer)
+    
+    def set_squelch(self, ssrc: int, enable: bool = True, open_snr_db: Optional[float] = None, 
+                    close_snr_db: Optional[float] = None):
+        """
+        Configure SNR-based squelch
+        
+        Args:
+            ssrc: SSRC of the channel
+            enable: Enable SNR squelch (default: True)
+            open_snr_db: SNR threshold in dB to open squelch (optional)
+            close_snr_db: SNR threshold in dB to close squelch (optional, should be < open_snr_db)
+        
+        Example:
+            >>> # Open squelch at 10 dB SNR, close at 8 dB
+            >>> control.set_squelch(ssrc=12345, enable=True, open_snr_db=10, close_snr_db=8)
+        """
+        _validate_ssrc(ssrc)
+        
+        cmdbuffer = bytearray()
+        cmdbuffer.append(CMD)
+        
+        encode_int(cmdbuffer, StatusType.SNR_SQUELCH, 1 if enable else 0)
+        if open_snr_db is not None:
+            encode_float(cmdbuffer, StatusType.SQUELCH_OPEN, open_snr_db)
+        if close_snr_db is not None:
+            encode_float(cmdbuffer, StatusType.SQUELCH_CLOSE, close_snr_db)
+        
+        encode_int(cmdbuffer, StatusType.OUTPUT_SSRC, ssrc)
+        encode_int(cmdbuffer, StatusType.COMMAND_TAG, secrets.randbits(31))
+        encode_eol(cmdbuffer)
+        
+        logger.info(f"Setting squelch for SSRC {ssrc}: enable={enable}, open={open_snr_db} dB, close={close_snr_db} dB")
+        self.send_command(cmdbuffer)
+    
+    def set_output_channels(self, ssrc: int, channels: int):
+        """
+        Set output channel count (mono/stereo)
+        
+        Args:
+            ssrc: SSRC of the channel
+            channels: 1 for mono, 2 for stereo
+                     For WFM mode: 2 enables FM stereo decoding, 1 disables it
+        
+        Raises:
+            ValidationError: If channels is not 1 or 2
+        
+        Example:
+            >>> control.set_output_channels(ssrc=12345, channels=2)  # Stereo
+        """
+        _validate_ssrc(ssrc)
+        if channels not in [1, 2]:
+            raise ValidationError(f"Invalid channel count: {channels} (must be 1 or 2)")
+        
+        cmdbuffer = bytearray()
+        cmdbuffer.append(CMD)
+        
+        encode_int(cmdbuffer, StatusType.OUTPUT_CHANNELS, channels)
+        encode_int(cmdbuffer, StatusType.OUTPUT_SSRC, ssrc)
+        encode_int(cmdbuffer, StatusType.COMMAND_TAG, secrets.randbits(31))
+        encode_eol(cmdbuffer)
+        
+        logger.info(f"Setting output channels for SSRC {ssrc} to {channels}")
+        self.send_command(cmdbuffer)
+    
+    def set_envelope_detection(self, ssrc: int, enable: bool):
+        """
+        Enable/disable envelope detection in linear modes (for AM)
+        
+        Args:
+            ssrc: SSRC of the channel
+            enable: True for envelope detection (AM), False for synchronous detection
+        
+        Example:
+            >>> control.set_envelope_detection(ssrc=12345, enable=True)  # AM mode
+        """
+        _validate_ssrc(ssrc)
+        
+        cmdbuffer = bytearray()
+        cmdbuffer.append(CMD)
+        
+        encode_int(cmdbuffer, StatusType.ENVELOPE, 1 if enable else 0)
+        encode_int(cmdbuffer, StatusType.OUTPUT_SSRC, ssrc)
+        encode_int(cmdbuffer, StatusType.COMMAND_TAG, secrets.randbits(31))
+        encode_eol(cmdbuffer)
+        
+        logger.info(f"Setting envelope detection for SSRC {ssrc}: {enable}")
+        self.send_command(cmdbuffer)
+    
+    def set_independent_sideband(self, ssrc: int, enable: bool):
+        """
+        Enable/disable Independent Sideband (ISB) mode
+        
+        In ISB mode, USB and LSB are demodulated separately and output to left/right channels.
+        
+        Args:
+            ssrc: SSRC of the channel
+            enable: True to enable ISB mode, False for normal operation
+        
+        Example:
+            >>> control.set_independent_sideband(ssrc=12345, enable=True)
+        """
+        _validate_ssrc(ssrc)
+        
+        cmdbuffer = bytearray()
+        cmdbuffer.append(CMD)
+        
+        encode_int(cmdbuffer, StatusType.INDEPENDENT_SIDEBAND, 1 if enable else 0)
+        encode_int(cmdbuffer, StatusType.OUTPUT_SSRC, ssrc)
+        encode_int(cmdbuffer, StatusType.COMMAND_TAG, secrets.randbits(31))
+        encode_eol(cmdbuffer)
+        
+        logger.info(f"Setting ISB mode for SSRC {ssrc}: {enable}")
+        self.send_command(cmdbuffer)
+    
+    def set_fm_threshold_extension(self, ssrc: int, enable: bool):
+        """
+        Enable/disable FM threshold extension (for weak signals)
+        
+        Args:
+            ssrc: SSRC of the channel
+            enable: True to enable threshold extension
+        
+        Example:
+            >>> control.set_fm_threshold_extension(ssrc=12345, enable=True)
+        """
+        _validate_ssrc(ssrc)
+        
+        cmdbuffer = bytearray()
+        cmdbuffer.append(CMD)
+        
+        encode_int(cmdbuffer, StatusType.THRESH_EXTEND, 1 if enable else 0)
+        encode_int(cmdbuffer, StatusType.OUTPUT_SSRC, ssrc)
+        encode_int(cmdbuffer, StatusType.COMMAND_TAG, secrets.randbits(31))
+        encode_eol(cmdbuffer)
+        
+        logger.info(f"Setting FM threshold extension for SSRC {ssrc}: {enable}")
+        self.send_command(cmdbuffer)
+    
+    def set_agc_threshold(self, ssrc: int, threshold_db: float):
+        """
+        Set AGC threshold (level above noise floor to activate AGC)
+        
+        Args:
+            ssrc: SSRC of the channel
+            threshold_db: Threshold in dB relative to noise floor
+        
+        Example:
+            >>> control.set_agc_threshold(ssrc=12345, threshold_db=10)
+        """
+        _validate_ssrc(ssrc)
+        
+        cmdbuffer = bytearray()
+        cmdbuffer.append(CMD)
+        
+        encode_float(cmdbuffer, StatusType.AGC_THRESHOLD, threshold_db)
+        encode_int(cmdbuffer, StatusType.OUTPUT_SSRC, ssrc)
+        encode_int(cmdbuffer, StatusType.COMMAND_TAG, secrets.randbits(31))
+        encode_eol(cmdbuffer)
+        
+        logger.info(f"Setting AGC threshold for SSRC {ssrc}: {threshold_db} dB")
+        self.send_command(cmdbuffer)
+    
+    def set_opus_bitrate(self, ssrc: int, bitrate: int):
+        """
+        Set Opus encoder bitrate
+        
+        Args:
+            ssrc: SSRC of the channel
+            bitrate: Bitrate in bits/sec (0 for auto, typical: 32000-128000)
+        
+        Example:
+            >>> control.set_opus_bitrate(ssrc=12345, bitrate=64000)  # 64 kbps
+            >>> control.set_opus_bitrate(ssrc=12345, bitrate=0)      # Auto
+        """
+        _validate_ssrc(ssrc)
+        if bitrate < 0:
+            raise ValidationError(f"Bitrate must be non-negative, got {bitrate}")
+        
+        cmdbuffer = bytearray()
+        cmdbuffer.append(CMD)
+        
+        encode_int(cmdbuffer, StatusType.OPUS_BIT_RATE, bitrate)
+        encode_int(cmdbuffer, StatusType.OUTPUT_SSRC, ssrc)
+        encode_int(cmdbuffer, StatusType.COMMAND_TAG, secrets.randbits(31))
+        encode_eol(cmdbuffer)
+        
+        logger.info(f"Setting Opus bitrate for SSRC {ssrc}: {bitrate} bps")
+        self.send_command(cmdbuffer)
+    
+    def set_packet_buffering(self, ssrc: int, min_blocks: int):
+        """
+        Set minimum packet buffering (0-4 blocks)
+        
+        Controls how many blocks to buffer before sending a packet.
+        Higher values reduce packet rate but increase latency.
+        
+        Args:
+            ssrc: SSRC of the channel
+            min_blocks: Minimum blocks (0-4). At 20ms/block: 0=no minimum, 4=80ms minimum
+        
+        Raises:
+            ValidationError: If min_blocks is not 0-4
+        
+        Example:
+            >>> control.set_packet_buffering(ssrc=12345, min_blocks=2)  # 40ms minimum
+        """
+        _validate_ssrc(ssrc)
+        if not (0 <= min_blocks <= 4):
+            raise ValidationError(f"min_blocks must be 0-4, got {min_blocks}")
+        
+        cmdbuffer = bytearray()
+        cmdbuffer.append(CMD)
+        
+        encode_int(cmdbuffer, StatusType.MINPACKET, min_blocks)
+        encode_int(cmdbuffer, StatusType.OUTPUT_SSRC, ssrc)
+        encode_int(cmdbuffer, StatusType.COMMAND_TAG, secrets.randbits(31))
+        encode_eol(cmdbuffer)
+        
+        logger.info(f"Setting packet buffering for SSRC {ssrc}: {min_blocks} blocks")
+        self.send_command(cmdbuffer)
+    
+    def set_filter2(self, ssrc: int, blocksize: int, kaiser_beta: Optional[float] = None):
+        """
+        Configure secondary filter (linear modes only)
+        
+        The secondary filter provides additional selectivity after the main filter.
+        
+        Args:
+            ssrc: SSRC of the channel
+            blocksize: Filter blocksize (0 to disable, 1-10 to enable)
+            kaiser_beta: Kaiser window beta for filter2 (optional)
+        
+        Example:
+            >>> control.set_filter2(ssrc=12345, blocksize=5, kaiser_beta=3.0)
+            >>> control.set_filter2(ssrc=12345, blocksize=0)  # Disable
+        """
+        _validate_ssrc(ssrc)
+        if not (0 <= blocksize <= 10):
+            raise ValidationError(f"blocksize must be 0-10, got {blocksize}")
+        
+        cmdbuffer = bytearray()
+        cmdbuffer.append(CMD)
+        
+        encode_int(cmdbuffer, StatusType.FILTER2, blocksize)
+        if kaiser_beta is not None:
+            encode_float(cmdbuffer, StatusType.FILTER2_KAISER_BETA, kaiser_beta)
+        
+        encode_int(cmdbuffer, StatusType.OUTPUT_SSRC, ssrc)
+        encode_int(cmdbuffer, StatusType.COMMAND_TAG, secrets.randbits(31))
+        encode_eol(cmdbuffer)
+        
+        logger.info(f"Setting filter2 for SSRC {ssrc}: blocksize={blocksize}, beta={kaiser_beta}")
+        self.send_command(cmdbuffer)
+    
+    def set_spectrum(self, ssrc: int, bin_bw_hz: Optional[float] = None, bin_count: Optional[int] = None,
+                     crossover_hz: Optional[float] = None, kaiser_beta: Optional[float] = None):
+        """
+        Configure spectrum analyzer mode parameters
+        
+        Args:
+            ssrc: SSRC of the channel
+            bin_bw_hz: Bin bandwidth in Hz (optional)
+            bin_count: Number of frequency bins (optional)
+            crossover_hz: Crossover frequency between algorithms in Hz (optional)
+            kaiser_beta: Kaiser window beta for spectrum analysis (optional)
+        
+        Example:
+            >>> control.set_spectrum(ssrc=12345, bin_bw_hz=100, bin_count=512)
+        """
+        _validate_ssrc(ssrc)
+        
+        cmdbuffer = bytearray()
+        cmdbuffer.append(CMD)
+        
+        if bin_bw_hz is not None:
+            _validate_positive(bin_bw_hz, "Bin bandwidth")
+            encode_float(cmdbuffer, StatusType.NONCOHERENT_BIN_BW, bin_bw_hz)
+        if bin_count is not None:
+            if bin_count <= 0:
+                raise ValidationError(f"bin_count must be positive, got {bin_count}")
+            encode_int(cmdbuffer, StatusType.BIN_COUNT, bin_count)
+        if crossover_hz is not None:
+            _validate_positive(crossover_hz, "Crossover frequency")
+            encode_float(cmdbuffer, StatusType.CROSSOVER, crossover_hz)
+        if kaiser_beta is not None:
+            encode_float(cmdbuffer, StatusType.SPECTRUM_KAISER_BETA, kaiser_beta)
+        
+        encode_int(cmdbuffer, StatusType.OUTPUT_SSRC, ssrc)
+        encode_int(cmdbuffer, StatusType.COMMAND_TAG, secrets.randbits(31))
+        encode_eol(cmdbuffer)
+        
+        logger.info(f"Setting spectrum for SSRC {ssrc}: bw={bin_bw_hz} Hz, bins={bin_count}, crossover={crossover_hz} Hz")
+        self.send_command(cmdbuffer)
+    
+    def set_status_interval(self, ssrc: int, interval: int):
+        """
+        Set automatic status reporting interval on data channel
+        
+        Args:
+            ssrc: SSRC of the channel
+            interval: Status interval in frames (0 to disable automatic status)
+        
+        Example:
+            >>> control.set_status_interval(ssrc=12345, interval=50)  # Every 50 frames
+            >>> control.set_status_interval(ssrc=12345, interval=0)   # Disable
+        """
+        _validate_ssrc(ssrc)
+        if interval < 0:
+            raise ValidationError(f"interval must be non-negative, got {interval}")
+        
+        cmdbuffer = bytearray()
+        cmdbuffer.append(CMD)
+        
+        encode_int(cmdbuffer, StatusType.STATUS_INTERVAL, interval)
+        encode_int(cmdbuffer, StatusType.OUTPUT_SSRC, ssrc)
+        encode_int(cmdbuffer, StatusType.COMMAND_TAG, secrets.randbits(31))
+        encode_eol(cmdbuffer)
+        
+        logger.info(f"Setting status interval for SSRC {ssrc}: {interval} frames")
+        self.send_command(cmdbuffer)
+    
+    def set_demod_type(self, ssrc: int, demod_type: int):
+        """
+        Set demodulator type
+        
+        Args:
+            ssrc: SSRC of the channel
+            demod_type: Demodulator type (0=LINEAR, 1=FM, 2=WFM, 3=SPECTRUM)
+        
+        Raises:
+            ValidationError: If demod_type is invalid
+        
+        Example:
+            >>> control.set_demod_type(ssrc=12345, demod_type=1)  # FM
+        """
+        _validate_ssrc(ssrc)
+        if not (0 <= demod_type <= 3):
+            raise ValidationError(f"Invalid demod_type: {demod_type} (must be 0-3)")
+        
+        cmdbuffer = bytearray()
+        cmdbuffer.append(CMD)
+        
+        encode_int(cmdbuffer, StatusType.DEMOD_TYPE, demod_type)
+        encode_int(cmdbuffer, StatusType.OUTPUT_SSRC, ssrc)
+        encode_int(cmdbuffer, StatusType.COMMAND_TAG, secrets.randbits(31))
+        encode_eol(cmdbuffer)
+        
+        logger.info(f"Setting demod type for SSRC {ssrc}: {demod_type}")
+        self.send_command(cmdbuffer)
+    
+    def set_output_encoding(self, ssrc: int, encoding: int):
+        """
+        Set output data encoding
+        
+        Args:
+            ssrc: SSRC of the channel
+            encoding: Encoding type (use Encoding constants from types.py)
+                     0=NO_ENCODING, 1=S16BE, 2=S16LE, 3=F32, 4=F16, 5=OPUS
+        
+        Example:
+            >>> from ka9q.types import Encoding
+            >>> control.set_output_encoding(ssrc=12345, encoding=Encoding.S16LE)
+            >>> control.set_output_encoding(ssrc=12345, encoding=Encoding.OPUS)
+        """
+        _validate_ssrc(ssrc)
+        
+        cmdbuffer = bytearray()
+        cmdbuffer.append(CMD)
+        
+        encode_int(cmdbuffer, StatusType.OUTPUT_ENCODING, encoding)
+        encode_int(cmdbuffer, StatusType.OUTPUT_SSRC, ssrc)
+        encode_int(cmdbuffer, StatusType.COMMAND_TAG, secrets.randbits(31))
+        encode_eol(cmdbuffer)
+        
+        logger.info(f"Setting output encoding for SSRC {ssrc}: {encoding}")
+        self.send_command(cmdbuffer)
+    
+    def set_rf_gain(self, ssrc: int, gain_db: float):
+        """
+        Set RF front-end gain
+        
+        Args:
+            ssrc: SSRC of the channel
+            gain_db: RF gain in dB (hardware-dependent range)
+        
+        Note:
+            Only works with hardware that supports variable RF gain (e.g., RX888)
+        
+        Example:
+            >>> control.set_rf_gain(ssrc=12345, gain_db=20)
+        """
+        _validate_ssrc(ssrc)
+        
+        cmdbuffer = bytearray()
+        cmdbuffer.append(CMD)
+        
+        encode_float(cmdbuffer, StatusType.RF_GAIN, gain_db)
+        encode_int(cmdbuffer, StatusType.OUTPUT_SSRC, ssrc)
+        encode_int(cmdbuffer, StatusType.COMMAND_TAG, secrets.randbits(31))
+        encode_eol(cmdbuffer)
+        
+        logger.info(f"Setting RF gain for SSRC {ssrc}: {gain_db} dB")
+        self.send_command(cmdbuffer)
+    
+    def set_rf_attenuation(self, ssrc: int, atten_db: float):
+        """
+        Set RF front-end attenuation
+        
+        Args:
+            ssrc: SSRC of the channel
+            atten_db: RF attenuation in dB (hardware-dependent range)
+        
+        Note:
+            Only works with hardware that supports variable RF attenuation (e.g., RX888)
+        
+        Example:
+            >>> control.set_rf_attenuation(ssrc=12345, atten_db=10)
+        """
+        _validate_ssrc(ssrc)
+        
+        cmdbuffer = bytearray()
+        cmdbuffer.append(CMD)
+        
+        encode_float(cmdbuffer, StatusType.RF_ATTEN, atten_db)
+        encode_int(cmdbuffer, StatusType.OUTPUT_SSRC, ssrc)
+        encode_int(cmdbuffer, StatusType.COMMAND_TAG, secrets.randbits(31))
+        encode_eol(cmdbuffer)
+        
+        logger.info(f"Setting RF attenuation for SSRC {ssrc}: {atten_db} dB")
+        self.send_command(cmdbuffer)
+    
+    def set_destination(self, ssrc: int, address: str, port: int = 5004):
+        """
+        Set RTP output destination (multicast address)
+        
+        This sets both the data and status destination addresses.
+        
+        Args:
+            ssrc: SSRC of the channel
+            address: Multicast IP address or mDNS name
+            port: RTP port number (default: 5004)
+        
+        Example:
+            >>> control.set_destination(ssrc=12345, address="239.1.2.3", port=5004)
+            >>> control.set_destination(ssrc=12345, address="wspr.local")
+        """
+        _validate_ssrc(ssrc)
+        _validate_multicast_address(address)
+        
+        cmdbuffer = bytearray()
+        cmdbuffer.append(CMD)
+        
+        encode_socket(cmdbuffer, StatusType.OUTPUT_DATA_DEST_SOCKET, address, port)
+        encode_int(cmdbuffer, StatusType.OUTPUT_SSRC, ssrc)
+        encode_int(cmdbuffer, StatusType.COMMAND_TAG, secrets.randbits(31))
+        encode_eol(cmdbuffer)
+        
+        logger.info(f"Setting destination for SSRC {ssrc}: {address}:{port}")
+        self.send_command(cmdbuffer)
+    
+    def set_first_lo(self, ssrc: int, frequency_hz: float):
+        """
+        Set first LO (front-end tuner) frequency
+        
+        This tunes the SDR hardware itself. Use with caution as it affects all channels.
+        
+        Args:
+            ssrc: SSRC of the channel (used for command routing)
+            frequency_hz: First LO frequency in Hz
+        
+        Example:
+            >>> control.set_first_lo(ssrc=12345, frequency_hz=14.1e6)
+        """
+        _validate_ssrc(ssrc)
+        _validate_frequency(frequency_hz)
+        
+        cmdbuffer = bytearray()
+        cmdbuffer.append(CMD)
+        
+        encode_double(cmdbuffer, StatusType.FIRST_LO_FREQUENCY, frequency_hz)
+        encode_int(cmdbuffer, StatusType.OUTPUT_SSRC, ssrc)
+        encode_int(cmdbuffer, StatusType.COMMAND_TAG, secrets.randbits(31))
+        encode_eol(cmdbuffer)
+        
+        logger.info(f"Setting first LO frequency for SSRC {ssrc}: {frequency_hz/1e6:.3f} MHz")
+        self.send_command(cmdbuffer)
+    
+    def set_options(self, ssrc: int, set_bits: int = 0, clear_bits: int = 0):
+        """
+        Set or clear option bits
+        
+        Option bits are used for experimental features and debugging.
+        
+        Args:
+            ssrc: SSRC of the channel
+            set_bits: Bit mask of options to set (OR operation)
+            clear_bits: Bit mask of options to clear (AND NOT operation)
+        
+        Example:
+            >>> control.set_options(ssrc=12345, set_bits=0x01)  # Set bit 0
+            >>> control.set_options(ssrc=12345, clear_bits=0x02)  # Clear bit 1
+        """
+        _validate_ssrc(ssrc)
+        
+        cmdbuffer = bytearray()
+        cmdbuffer.append(CMD)
+        
+        if set_bits:
+            encode_int64(cmdbuffer, StatusType.SETOPTS, set_bits)
+        if clear_bits:
+            encode_int64(cmdbuffer, StatusType.CLEAROPTS, clear_bits)
+        
+        encode_int(cmdbuffer, StatusType.OUTPUT_SSRC, ssrc)
+        encode_int(cmdbuffer, StatusType.COMMAND_TAG, secrets.randbits(31))
+        encode_eol(cmdbuffer)
+        
+        logger.info(f"Setting options for SSRC {ssrc}: set=0x{set_bits:x}, clear=0x{clear_bits:x}")
+        self.send_command(cmdbuffer)
+    
     def close(self):
         """
         Close all sockets with proper error handling
