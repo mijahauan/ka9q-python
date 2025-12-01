@@ -1,5 +1,59 @@
 # Changelog
 
+## [3.1.0] - 2025-12-01
+
+### 🎯 SSRC Abstraction - SSRC-Free Channel Creation
+
+This release removes SSRC from the application concern. Applications now specify **what they want** (frequency, mode, sample rate) and the system handles SSRC allocation internally.
+
+### Added
+
+**SSRC Allocation:**
+- `allocate_ssrc(frequency_hz, preset, sample_rate, agc, gain)` - Deterministic SSRC allocation from channel parameters. Same parameters always produce the same SSRC, enabling stream sharing across applications.
+
+**SSRC-Free `create_channel()`:**
+- `ssrc` parameter is now **optional** (moved to end of parameters)
+- When omitted, SSRC is auto-allocated using `allocate_ssrc()`
+- Method now **returns the SSRC** (useful when auto-allocated)
+
+### Changed
+
+- `create_channel()` signature: `frequency_hz` is now the first (required) parameter
+- `create_channel()` now returns `int` (the SSRC) instead of `None`
+
+### Cross-Library Compatibility
+
+The SSRC allocation algorithm matches signal-recorder's `StreamSpec.ssrc_hash()`:
+```python
+key = (round(frequency_hz), preset.lower(), sample_rate, agc, round(gain, 1))
+return hash(key) & 0x7FFFFFFF
+```
+
+This ensures:
+- Same parameters → same SSRC in both ka9q-python and signal-recorder
+- Stream sharing works across applications using either library
+- Deterministic allocation for coordination
+
+### Example
+
+```python
+from ka9q import RadiodControl, allocate_ssrc
+
+# SSRC-free API (recommended)
+with RadiodControl("radiod.local") as control:
+    ssrc = control.create_channel(
+        frequency_hz=14.074e6,
+        preset="usb",
+        sample_rate=12000
+    )
+    print(f"Created channel with SSRC: {ssrc}")
+
+# Or use allocate_ssrc() directly for coordination
+ssrc = allocate_ssrc(10.0e6, "iq", 16000)
+```
+
+---
+
 ## [3.0.0] - 2025-12-01
 
 ### 🎉 Major Release: Complete RadioD Feature Exposure

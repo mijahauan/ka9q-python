@@ -28,7 +28,7 @@ import threading
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Optional, Dict
+from typing import Optional, Dict, Union
 from .types import StatusType, CMD
 from .discovery import discover_channels
 from .exceptions import ConnectionError, CommandError, ValidationError
@@ -64,6 +64,54 @@ class Metrics:
             'last_error_time': self.last_error_time,
             'errors_by_type': dict(self.errors_by_type),
         }
+
+
+# SSRC allocation function - compatible with signal-recorder
+def allocate_ssrc(
+    frequency_hz: float,
+    preset: str = "iq",
+    sample_rate: int = 16000,
+    agc: bool = False,
+    gain: float = 0.0
+) -> int:
+    """
+    Allocate a deterministic SSRC from channel parameters.
+    
+    This function generates a consistent SSRC for a given set of channel
+    parameters. The same parameters will always produce the same SSRC,
+    enabling stream sharing and coordination between applications.
+    
+    The algorithm matches signal-recorder's StreamSpec.ssrc_hash() for
+    cross-library compatibility.
+    
+    Args:
+        frequency_hz: Center frequency in Hz
+        preset: Demodulation mode ("iq", "usb", "lsb", "am", "fm", "cw")
+        sample_rate: Output sample rate in Hz
+        agc: Automatic gain control enabled
+        gain: Manual gain in dB
+        
+    Returns:
+        Deterministic 31-bit positive SSRC value
+        
+    Example:
+        >>> ssrc = allocate_ssrc(10.0e6, "iq", 16000)
+        >>> print(f"SSRC for 10 MHz IQ @ 16kHz: {ssrc}")
+        
+        # Same parameters always give same SSRC
+        >>> ssrc2 = allocate_ssrc(10.0e6, "iq", 16000)
+        >>> assert ssrc == ssrc2
+    """
+    # Match signal-recorder's StreamSpec.__hash__() algorithm
+    key = (
+        round(frequency_hz),      # Frequency rounded to nearest Hz
+        preset.lower(),           # Preset normalized to lowercase
+        sample_rate,              # Sample rate as-is
+        agc,                      # AGC boolean
+        round(gain, 1)            # Gain rounded to 0.1 dB
+    )
+    # Keep positive, 31 bits (matches signal-recorder)
+    return hash(key) & 0x7FFFFFFF
 
 
 # Input validation functions
@@ -1018,18 +1066,22 @@ class RadiodControl:
         logger.info(f"Setting output level for SSRC {ssrc} to {level}")
         self.send_command(cmdbuffer)
     
-    def create_channel(self, ssrc: int, frequency_hz: float, 
+    def create_channel(self, frequency_hz: float, 
                        preset: str = "iq", sample_rate: Optional[int] = None,
                        agc_enable: int = 0, gain: float = 0.0,
-                       destination: Optional[str] = None):
+                       destination: Optional[str] = None,
+                       ssrc: Optional[int] = None) -> int:
         """
         Create a new channel with specified configuration
         
         Creates and configures a radiod channel with a single command packet,
         ensuring all parameters are set together atomically.
         
+        SSRC can be auto-allocated by omitting the ssrc parameter. The allocation
+        uses a deterministic hash of channel parameters, enabling stream sharing
+        between applications using the same parameters.
+        
         Args:
-            ssrc: SSRC (channel identifier), typically derived from frequency (Hz -> kHz)
             frequency_hz: Tuning frequency in Hz
             preset: Mode/preset name (default: "iq"). Common values:
                    - "iq": Raw IQ output (no demodulation)
@@ -1044,6 +1096,11 @@ class RadiodControl:
             destination: RTP destination multicast address (optional). Format: "address" or "address:port"
                         Examples: "239.1.2.3", "wspr.local", "239.1.2.3:5004"
                         If not specified, uses radiod's default from config file.
+            ssrc: SSRC (channel identifier). If None, auto-allocated from parameters.
+                  Auto-allocation uses allocate_ssrc() for deterministic, shareable SSRCs.
+        
+        Returns:
+            The SSRC of the created channel (useful when auto-allocated)
         
         Raises:
             CommandError: If command fails to send
@@ -1052,13 +1109,32 @@ class RadiodControl:
         
         Example:
             >>> control = RadiodControl("radiod.local")
-            >>> control.create_channel(
-            ...     ssrc=14074000,
+            >>> # SSRC-free API (recommended) - SSRC auto-allocated
+            >>> ssrc = control.create_channel(
             ...     frequency_hz=14.074e6,
             ...     preset="usb",
             ...     sample_rate=12000
             ... )
+            >>> print(f"Channel created with SSRC: {ssrc}")
+            
+            >>> # Explicit SSRC (backward compatible)
+            >>> control.create_channel(
+            ...     frequency_hz=10.0e6,
+            ...     preset="iq",
+            ...     ssrc=10000000
+            ... )
         """
+        # Auto-allocate SSRC if not provided
+        if ssrc is None:
+            ssrc = allocate_ssrc(
+                frequency_hz=frequency_hz,
+                preset=preset,
+                sample_rate=sample_rate or 16000,  # Default for allocation
+                agc=bool(agc_enable),
+                gain=gain
+            )
+            logger.info(f"Auto-allocated SSRC: {ssrc}")
+        
         # Validate inputs
         _validate_ssrc(ssrc)
         _validate_frequency(frequency_hz)
@@ -1129,6 +1205,7 @@ class RadiodControl:
         self.send_command(cmdbuffer)
         
         logger.info(f"Channel {ssrc} created and configured")
+        return ssrc
     
     def verify_channel(self, ssrc: int, expected_freq: Optional[float] = None) -> bool:
         """
