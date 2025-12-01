@@ -1,27 +1,3 @@
-# GitHub Release Instructions for v3.1.0
-
-## Step 1: Navigate to Releases
-
-Go to: https://github.com/mijahauan/ka9q-python/releases/new
-
-## Step 2: Fill in Release Form
-
-### Tag
-```
-v3.1.0
-```
-(Should already exist and be selectable)
-
-### Release Title
-```
-Release v3.1.0: SSRC Abstraction
-```
-
-### Description
-Copy and paste the following (from GITHUB_RELEASE_v3.1.0.md):
-
----
-
 # ka9q-python v3.1.0 🎯
 
 ## SSRC Abstraction - Simplified Channel Creation
@@ -69,7 +45,7 @@ ssrc = allocate_ssrc(
 # Use with create_channel() or share with other apps
 ```
 
-### � API Changes
+### 🔄 API Changes
 
 **`create_channel()` signature updated:**
 - `frequency_hz` is now the **first required parameter**
@@ -144,7 +120,7 @@ Or upgrade:
 pip install --upgrade ka9q
 ```
 
-### � Documentation
+### 📖 Documentation
 
 - **CHANGELOG.md** - Complete version history
 - **README.md** - Updated with new API examples
@@ -161,36 +137,3 @@ https://github.com/mijahauan/ka9q-python/issues
 ---
 
 **Full Changelog**: https://github.com/mijahauan/ka9q-python/blob/main/CHANGELOG.md
-
----
-
-## Step 3: Options
-
-- [x] Set as the latest release
-- [x] Create a discussion for this release (optional but recommended)
-
-## Step 4: Publish
-
-Click "Publish release"
-
----
-
-## Alternative: Using GitHub CLI
-
-If you have GitHub CLI installed:
-
-```bash
-gh release create v3.1.0 \
-  --title "Release v3.1.0: SSRC Abstraction" \
-  --notes-file docs/releases/GITHUB_RELEASE_v3.1.0.md \
-  --latest
-```
-
----
-
-## After Publishing
-
-1. Verify release appears at: https://github.com/mijahauan/ka9q-python/releases
-2. Check that tag v3.1.0 is visible
-3. Optionally announce on discussions or social media
-4. Consider publishing to PyPI (see PyPI_PUBLISH.md)
