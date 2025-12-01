@@ -127,7 +127,7 @@ pip install --upgrade ka9q
 
 ### 🙏 Credits
 
-SSRC allocation algorithm inspired by Phil Karn's signal-recorder project.
+SSRC allocation algorithm inspired by Phil Karn's ka9q-radio project.
 
 ### 🐛 Issues & Feedback
 
