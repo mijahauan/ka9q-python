@@ -22,7 +22,7 @@ Basic usage:
         ssrc = allocate_ssrc(10.0e6, "iq", 16000)
 """
 
-__version__ = '3.1.0'
+__version__ = '3.2.0'
 __author__ = 'Michael J. Hauan'
 
 from .control import RadiodControl, allocate_ssrc
@@ -43,25 +43,56 @@ from .rtp_recorder import (
     parse_rtp_header,
     rtp_to_wallclock
 )
+from .stream_quality import (
+    GapSource,
+    GapEvent,
+    StreamQuality,
+)
+from .resequencer import (
+    PacketResequencer,
+    RTPPacket,
+    ResequencerStats,
+)
+from .stream import (
+    RadiodStream,
+)
 
 __all__ = [
+    # Control
     'RadiodControl',
     'allocate_ssrc',
+    
+    # Discovery
     'discover_channels',
     'discover_channels_native',
     'discover_channels_via_control',
     'discover_radiod_services',
     'ChannelInfo',
+    
+    # Types
     'StatusType',
     'Encoding',
+    
+    # Exceptions
     'Ka9qError',
     'ConnectionError',
     'CommandError',
     'ValidationError',
+    
+    # Low-level RTP (packet-oriented)
     'RTPRecorder',
     'RecorderState',
     'RTPHeader',
     'RecordingMetrics',
     'parse_rtp_header',
     'rtp_to_wallclock',
+    
+    # Stream API (sample-oriented) - NEW
+    'RadiodStream',
+    'StreamQuality',
+    'GapSource',
+    'GapEvent',
+    'PacketResequencer',
+    'RTPPacket',
+    'ResequencerStats',
 ]

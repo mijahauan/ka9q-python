@@ -1,5 +1,80 @@
 # Changelog
 
+## [3.2.0] - 2025-12-01
+
+### 🌊 RadiodStream API - Continuous Sample Delivery with Quality Tracking
+
+This release adds a high-level streaming API that delivers continuous sample streams with comprehensive quality metadata. Designed for applications like GRAPE, WSPR, CODAR, and SuperDARN that need reliable data capture with gap detection and quality metrics.
+
+### Added
+
+**Stream Module (`ka9q.stream`):**
+- `RadiodStream` - High-level sample stream with automatic resequencing and gap filling
+  - Callback-based delivery: `on_samples(samples: np.ndarray, quality: StreamQuality)`
+  - Handles IQ and audio modes automatically
+  - Cross-platform multicast support (Linux, macOS, Windows)
+
+**Quality Tracking (`ka9q.stream_quality`):**
+- `StreamQuality` - Comprehensive quality metrics per batch and cumulative
+  - `completeness_pct` - Percentage of expected samples received
+  - `total_gap_events` / `total_gaps_filled` - Gap statistics
+  - RTP packet metrics: received, lost, duplicate, resequenced
+  - RTP timestamps: `first_rtp_timestamp`, `last_rtp_timestamp` for precise timing
+- `GapEvent` - Individual gap details (position, duration, source)
+- `GapSource` - Gap type classification (NETWORK_LOSS, RESEQUENCE_TIMEOUT, EMPTY_PAYLOAD, etc.)
+
+**Resequencer (`ka9q.resequencer`):**
+- `PacketResequencer` - Circular buffer resequencing with gap detection
+  - Handles out-of-order packet delivery
+  - KA9Q-style signed 32-bit timestamp arithmetic for wrap handling
+  - Zero-fills gaps for continuous stream integrity
+- `RTPPacket` - Packet data structure with samples
+- `ResequencerStats` - Resequencing statistics
+
+**Examples:**
+- `examples/stream_example.py` - Basic streaming demonstration
+- `examples/grape_integration_example.py` - Two-phase recording pattern (startup buffer → recording)
+
+### Example Usage
+
+```python
+from ka9q import RadiodStream, StreamQuality, discover_channels
+
+def on_samples(samples, quality: StreamQuality):
+    print(f"Got {len(samples)} samples, {quality.completeness_pct:.1f}% complete")
+    for gap in quality.batch_gaps:
+        print(f"  Gap: {gap.source.value}, {gap.duration_samples} samples")
+
+channels = discover_channels('radiod.local')
+stream = RadiodStream(
+    channel=channels[10000000],
+    on_samples=on_samples,
+    samples_per_packet=320,  # RTP timestamp increment at 16kHz
+)
+stream.start()
+# ... run until done ...
+final_quality = stream.stop()
+```
+
+### Architecture
+
+```
+radiod → Multicast → RadiodStream → PacketResequencer → App Callback
+                          ↓
+                    StreamQuality (per batch + cumulative)
+```
+
+**Core delivers:**
+- Continuous sample stream (gaps zero-filled)
+- Quality metadata with every callback
+
+**Applications handle:**
+- Segmentation (1-minute NPZ, 2-minute WAV, etc.)
+- Format conversion
+- App-specific gap classification (cadence_fill, late_start, etc.)
+
+---
+
 ## [3.1.0] - 2025-12-01
 
 ### 🎯 SSRC Abstraction - SSRC-Free Channel Creation
