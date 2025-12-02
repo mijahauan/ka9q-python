@@ -16,6 +16,7 @@ import struct
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from ka9q import discover_channels_native, discover_channels, ChannelInfo
+from ka9q.discovery import _decode_escape_sequences
 from ka9q.types import StatusType
 
 
@@ -243,6 +244,59 @@ class TestNativeDiscovery(unittest.TestCase):
             
         except Exception as e:
             self.fail(f"Parameter check failed: {e}")
+    
+    def test_decode_escape_sequences_decimal(self):
+        """Test decoding of decimal escape sequences from avahi-browse"""
+        # Test decimal 032 (space character, ASCII 32)
+        result = _decode_escape_sequences(r"ACO G\032test")
+        self.assertEqual(result, "ACO G test")
+        
+        # Test decimal 064 (@ character, ASCII 64)
+        result = _decode_escape_sequences(r"ACO\064test")
+        self.assertEqual(result, "ACO@test")
+        
+        # Test multiple escape sequences
+        result = _decode_escape_sequences(r"ACO G\032\064EM38ww\032with\032SAS2")
+        self.assertEqual(result, "ACO G @EM38ww with SAS2")
+    
+    def test_decode_escape_sequences_real_world(self):
+        """Test with real-world service names from avahi-browse"""
+        test_cases = [
+            (r"ACO G\032\064EM38ww\032with\032SAS2", "ACO G @EM38ww with SAS2"),
+            (r"ACO G\032\064EM38ww\032with\032T3FD", "ACO G @EM38ww with T3FD"),
+            (r"ACO G\032\064EM38ww\032with\032airspy", "ACO G @EM38ww with airspy"),
+            (r"ACO G\032\064EM38ww\032with\032airspyhf", "ACO G @EM38ww with airspyhf"),
+        ]
+        
+        for input_str, expected in test_cases:
+            with self.subTest(input=input_str):
+                result = _decode_escape_sequences(input_str)
+                self.assertEqual(result, expected)
+    
+    def test_decode_escape_sequences_no_escapes(self):
+        """Test that strings without escapes are unchanged"""
+        test_strings = [
+            "normal_string",
+            "string with spaces",
+            "string-with-dashes",
+            "radiod.local",
+        ]
+        
+        for test_str in test_strings:
+            with self.subTest(input=test_str):
+                result = _decode_escape_sequences(test_str)
+                self.assertEqual(result, test_str)
+    
+    def test_decode_escape_sequences_control_chars(self):
+        """Test that control characters are replaced with spaces"""
+        # Test various control characters (< 32) - using decimal values
+        result = _decode_escape_sequences(r"\000\001\010\031")
+        # All control chars should become spaces
+        self.assertEqual(result, "    ")
+        
+        # Test DEL character (127 decimal)
+        result = _decode_escape_sequences(r"\127")
+        self.assertEqual(result, " ")
 
 
 class TestDiscoveryIntegration(unittest.TestCase):

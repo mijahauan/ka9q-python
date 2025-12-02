@@ -413,6 +413,34 @@ def find_channels_by_frequencies(
 
 
 
+def _decode_escape_sequences(s: str) -> str:
+    """
+    Decode decimal escape sequences in a string from avahi-browse output
+    
+    avahi-browse uses decimal ASCII escape sequences (e.g., \064 = ASCII 64 = '@')
+    
+    Args:
+        s: String potentially containing escape sequences like \032 or \064
+        
+    Returns:
+        Decoded string with escape sequences converted to actual characters
+    """
+    def replace_decimal(match):
+        """Replace decimal escape sequence with actual character"""
+        decimal_str = match.group(1)
+        char_code = int(decimal_str, 10)  # Decimal, not octal!
+        # Replace control characters and non-printable chars with space
+        if char_code < 32 or char_code == 127:
+            return ' '
+        return chr(char_code)
+    
+    # Replace decimal sequences like \032 (space) or \064 (@) with actual characters
+    s = re.sub(r'\\(\d{3})', replace_decimal, s)
+    # Replace other common escape sequences
+    s = s.replace(r'\n', '\n').replace(r'\t', '\t').replace(r'\\', '\\')
+    return s
+
+
 def discover_radiod_services():
     """
     Discover all radiod services on the network via mDNS
@@ -421,7 +449,6 @@ def discover_radiod_services():
         List of dicts with "name" and "address" keys
     """
     import subprocess
-    import re
     
     # Use dict to automatically deduplicate by address
     services_dict = {}
@@ -437,7 +464,7 @@ def discover_radiod_services():
             if line.startswith("="):
                 parts = line.split(";")
                 if len(parts) >= 8:
-                    name = parts[3]
+                    name = _decode_escape_sequences(parts[3])
                     address = parts[7]
                     # Use address as key to deduplicate
                     services_dict[address] = {"name": name, "address": address}

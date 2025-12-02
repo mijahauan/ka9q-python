@@ -224,21 +224,17 @@ function displayChannelDetails(status) {
     clone.querySelector('.low-edge-value').textContent = formatNumber(status.low_edge) + ' Hz';
     clone.querySelector('.high-edge-value').textContent = formatNumber(status.high_edge) + ' Hz';
     clone.querySelector('.bandwidth-value').textContent = formatNumber(status.bandwidth) + ' Hz';
+    clone.querySelector('.kaiser-beta-value').textContent = 
+        status.kaiser_beta !== null ? status.kaiser_beta.toFixed(2) : 'N/A';
+    clone.querySelector('.filter-blocksize-value').textContent = 
+        status.filter_blocksize !== null ? formatNumber(status.filter_blocksize) : 'N/A';
+    clone.querySelector('.filter-fir-length-value').textContent = 
+        status.filter_fir_length !== null ? formatNumber(status.filter_fir_length) : 'N/A';
     
     // Output
     clone.querySelector('.samprate-value').textContent = formatNumber(status.sample_rate) + ' Hz';
     clone.querySelector('.encoding-value').textContent = status.encoding || 'N/A';
     clone.querySelector('.destination-value').textContent = status.destination || 'N/A';
-    
-    // Gain & AGC
-    clone.querySelector('.agc-value').textContent = status.agc_enable ? 'ON' : 'OFF';
-    clone.querySelector('.gain-value').textContent = formatDecimal(status.gain) + ' dB';
-    clone.querySelector('.rf-gain-value').textContent = 
-        status.rf_gain !== null ? formatDecimal(status.rf_gain) + ' dB' : 'N/A';
-    clone.querySelector('.rf-atten-value').textContent = 
-        status.rf_atten !== null ? formatDecimal(status.rf_atten) + ' dB' : 'N/A';
-    clone.querySelector('.rf-agc-value').textContent = 
-        status.rf_agc !== null ? (status.rf_agc ? 'ON' : 'OFF') : 'N/A';
     
     // Signal
     clone.querySelector('.snr-value').textContent = 
@@ -247,6 +243,68 @@ function displayChannelDetails(status) {
         status.baseband_power !== null ? formatDecimal(status.baseband_power) + ' dB' : 'N/A';
     clone.querySelector('.noise-value').textContent = 
         status.noise_density !== null ? formatDecimal(status.noise_density) + ' dB/Hz' : 'N/A';
+    clone.querySelector('.if-power-value').textContent = 
+        status.if_power !== null ? formatDecimal(status.if_power) + ' dB' : 'N/A';
+    
+    // Demodulation
+    const demodTypes = {0: 'Linear', 1: 'FM', 2: 'WFM', 3: 'Spectrum'};
+    clone.querySelector('.demod-type-value').textContent = 
+        demodTypes[status.demod_type] || 'Unknown';
+    
+    const pllStatus = status.pll_enable 
+        ? (status.pll_lock ? 'Locked' : 'Unlocked')
+        : 'Disabled';
+    clone.querySelector('.pll-status-value').textContent = pllStatus;
+    
+    clone.querySelector('.pll-bw-value').textContent = 
+        status.pll_bw !== null ? formatDecimal(status.pll_bw) + ' Hz' : 'N/A';
+    
+    clone.querySelector('.squelch-value').textContent = 
+        status.squelch_open !== null ? formatDecimal(status.squelch_open) + ' dB' : 'N/A';
+    
+    // LO Frequencies
+    clone.querySelector('.first-lo-value').textContent = 
+        status.first_lo_frequency ? formatFrequency(status.first_lo_frequency) : 'N/A';
+    clone.querySelector('.second-lo-value').textContent = 
+        status.second_lo_frequency ? formatFrequency(status.second_lo_frequency) : 'N/A';
+    clone.querySelector('.shift-freq-value').textContent = 
+        status.shift_frequency !== null ? formatNumber(status.shift_frequency) + ' Hz' : 'N/A';
+    clone.querySelector('.doppler-freq-value').textContent = 
+        status.doppler_frequency !== null ? formatDecimal(status.doppler_frequency) + ' Hz' : 'N/A';
+    
+    // Hardware
+    clone.querySelector('.lna-gain-value').textContent = 
+        status.lna_gain !== null ? formatDecimal(status.lna_gain) + ' dB' : 'N/A';
+    clone.querySelector('.mixer-gain-value').textContent = 
+        status.mixer_gain !== null ? formatDecimal(status.mixer_gain) + ' dB' : 'N/A';
+    clone.querySelector('.if-gain-value').textContent = 
+        status.if_gain !== null ? formatDecimal(status.if_gain) + ' dB' : 'N/A';
+    
+    // Statistics
+    clone.querySelector('.data-packets-value').textContent = 
+        formatNumber(status.output_data_packets || 0);
+    clone.querySelector('.meta-packets-value').textContent = 
+        formatNumber(status.output_metadata_packets || 0);
+    clone.querySelector('.output-errors-value').textContent = 
+        formatNumber(status.output_errors || 0);
+    clone.querySelector('.filter-drops-value').textContent = 
+        formatNumber(status.filter_drops || 0);
+    
+    // Gain & AGC
+    clone.querySelector('.agc-value').textContent = status.agc_enable ? 'ON' : 'OFF';
+    clone.querySelector('.gain-value').textContent = formatDecimal(status.gain) + ' dB';
+    clone.querySelector('.headroom-value').textContent = 
+        status.headroom !== null ? formatDecimal(status.headroom) + ' dB' : 'N/A';
+    clone.querySelector('.agc-hangtime-value').textContent = 
+        status.agc_hangtime !== null ? formatDecimal(status.agc_hangtime) + ' s' : 'N/A';
+    clone.querySelector('.agc-recovery-value').textContent = 
+        status.agc_recovery_rate !== null ? formatDecimal(status.agc_recovery_rate) + ' dB/s' : 'N/A';
+    clone.querySelector('.rf-gain-value').textContent = 
+        status.rf_gain !== null ? formatDecimal(status.rf_gain) + ' dB' : 'N/A';
+    clone.querySelector('.rf-atten-value').textContent = 
+        status.rf_atten !== null ? formatDecimal(status.rf_atten) + ' dB' : 'N/A';
+    clone.querySelector('.rf-agc-value').textContent = 
+        status.rf_agc !== null ? (status.rf_agc ? 'ON' : 'OFF') : 'N/A';
     
     // Close button
     clone.querySelector('.close-btn').addEventListener('click', closeChannelDetails);

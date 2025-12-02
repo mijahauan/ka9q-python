@@ -116,6 +116,9 @@ def get_channel_status(radiod_address, ssrc):
             'low_edge': status.get('low_edge', 0),
             'high_edge': status.get('high_edge', 0),
             'bandwidth': abs(status.get('high_edge', 0) - status.get('low_edge', 0)),
+            'kaiser_beta': status.get('kaiser_beta'),
+            'filter_blocksize': status.get('filter_blocksize'),
+            'filter_fir_length': status.get('filter_fir_length'),
             
             # Gain & AGC
             'agc_enable': status.get('agc_enable', False),
@@ -123,11 +126,42 @@ def get_channel_status(radiod_address, ssrc):
             'rf_gain': status.get('rf_gain'),
             'rf_atten': status.get('rf_atten'),
             'rf_agc': status.get('rf_agc'),
+            'headroom': status.get('headroom'),
+            'agc_hangtime': status.get('agc_hangtime'),
+            'agc_recovery_rate': status.get('agc_recovery_rate'),
+            'agc_threshold': status.get('agc_threshold'),
             
             # Signal measurements
             'noise_density': status.get('noise_density'),
             'baseband_power': status.get('baseband_power'),
-            'snr': status.get('snr')
+            'snr': status.get('snr'),
+            'if_power': status.get('if_power'),
+            
+            # Demodulation
+            'demod_type': status.get('demod_type', 0),
+            'pll_enable': status.get('pll_enable'),
+            'pll_lock': status.get('pll_lock'),
+            'pll_bw': status.get('pll_bw'),
+            'squelch_open': status.get('squelch_open'),
+            'squelch_close': status.get('squelch_close'),
+            
+            # LO Frequencies
+            'first_lo_frequency': status.get('first_lo_frequency'),
+            'second_lo_frequency': status.get('second_lo_frequency'),
+            'shift_frequency': status.get('shift_frequency'),
+            'doppler_frequency': status.get('doppler_frequency'),
+            'doppler_frequency_rate': status.get('doppler_frequency_rate'),
+            
+            # Hardware
+            'lna_gain': status.get('lna_gain'),
+            'mixer_gain': status.get('mixer_gain'),
+            'if_gain': status.get('if_gain'),
+            
+            # Statistics
+            'output_data_packets': status.get('output_data_packets'),
+            'output_metadata_packets': status.get('output_metadata_packets'),
+            'output_errors': status.get('output_errors'),
+            'filter_drops': status.get('filter_drops')
         }
         
         return jsonify({

@@ -98,6 +98,18 @@
                             <label>Bandwidth:</label>
                             <span class="value bandwidth-value"></span>
                         </div>
+                        <div class="info-item">
+                            <label title="Kaiser window shaping parameter">Kaiser β:</label>
+                            <span class="value kaiser-beta-value"></span>
+                        </div>
+                        <div class="info-item">
+                            <label title="FFT block size">FFT Size:</label>
+                            <span class="value filter-blocksize-value"></span>
+                        </div>
+                        <div class="info-item">
+                            <label title="FIR filter length">FIR Length:</label>
+                            <span class="value filter-fir-length-value"></span>
+                        </div>
                     </div>
                 </div>
 
@@ -136,11 +148,106 @@
                             <label>Noise:</label>
                             <span class="value noise-value"></span>
                         </div>
+                        <div class="info-item">
+                            <label>IF Power:</label>
+                            <span class="value if-power-value"></span>
+                        </div>
                     </div>
                 </div>
             </div>
 
-            <!-- Second row: Gain & AGC (spans full width) -->
+            <!-- Second row: Additional sections grid -->
+            <div class="sections-grid">
+                <!-- Demodulation -->
+                <div class="section">
+                    <h3>Demodulation</h3>
+                    <div class="info-list">
+                        <div class="info-item">
+                            <label>Type:</label>
+                            <span class="value demod-type-value"></span>
+                        </div>
+                        <div class="info-item">
+                            <label>PLL:</label>
+                            <span class="value pll-status-value"></span>
+                        </div>
+                        <div class="info-item">
+                            <label title="PLL bandwidth">PLL BW:</label>
+                            <span class="value pll-bw-value"></span>
+                        </div>
+                        <div class="info-item">
+                            <label title="Squelch open threshold">Squelch:</label>
+                            <span class="value squelch-value"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- LO Frequencies -->
+                <div class="section">
+                    <h3>LO Frequencies</h3>
+                    <div class="info-list">
+                        <div class="info-item">
+                            <label>1st LO:</label>
+                            <span class="value first-lo-value"></span>
+                        </div>
+                        <div class="info-item">
+                            <label>2nd LO:</label>
+                            <span class="value second-lo-value"></span>
+                        </div>
+                        <div class="info-item">
+                            <label>Shift:</label>
+                            <span class="value shift-freq-value"></span>
+                        </div>
+                        <div class="info-item">
+                            <label>Doppler:</label>
+                            <span class="value doppler-freq-value"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Hardware -->
+                <div class="section">
+                    <h3>Hardware</h3>
+                    <div class="info-list">
+                        <div class="info-item">
+                            <label>LNA Gain:</label>
+                            <span class="value lna-gain-value"></span>
+                        </div>
+                        <div class="info-item">
+                            <label>Mixer Gain:</label>
+                            <span class="value mixer-gain-value"></span>
+                        </div>
+                        <div class="info-item">
+                            <label>IF Gain:</label>
+                            <span class="value if-gain-value"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Statistics -->
+                <div class="section">
+                    <h3>Statistics</h3>
+                    <div class="info-list">
+                        <div class="info-item">
+                            <label>Data Pkts:</label>
+                            <span class="value data-packets-value"></span>
+                        </div>
+                        <div class="info-item">
+                            <label>Meta Pkts:</label>
+                            <span class="value meta-packets-value"></span>
+                        </div>
+                        <div class="info-item">
+                            <label>Errors:</label>
+                            <span class="value output-errors-value"></span>
+                        </div>
+                        <div class="info-item">
+                            <label>Drops:</label>
+                            <span class="value filter-drops-value"></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Third row: Gain & AGC (spans full width) -->
             <div class="section section-full">
                 <h3>Gain & AGC</h3>
                 <div class="info-grid">
@@ -151,6 +258,18 @@
                     <div class="info-item">
                         <label>Channel Gain:</label>
                         <span class="value gain-value"></span>
+                    </div>
+                    <div class="info-item">
+                        <label title="AGC headroom">Headroom:</label>
+                        <span class="value headroom-value"></span>
+                    </div>
+                    <div class="info-item">
+                        <label title="AGC hang time">Hang Time:</label>
+                        <span class="value agc-hangtime-value"></span>
+                    </div>
+                    <div class="info-item">
+                        <label title="AGC recovery rate">Recovery:</label>
+                        <span class="value agc-recovery-value"></span>
                     </div>
                     <div class="info-item">
                         <label>RF Gain:</label>
