@@ -23,7 +23,7 @@ Basic usage:
 """
 
 __version__ = '3.2.0'
-__author__ = 'Michael J. Hauan'
+__author__ = 'Michael Hauan AC0G'
 
 from .control import RadiodControl, allocate_ssrc
 from .discovery import (

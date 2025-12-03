@@ -3,12 +3,12 @@ requires = ["setuptools>=64", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ka9q"
+name = "ka9q-python"
 version = "3.2.0"
 description = "Python interface for ka9q-radio control and monitoring"
 readme = "README.md"
 authors = [
-    {name = "Michael J. Hauan", email = "ac0g@hauan.org"}
+    {name = "Michael Hauan AC0G", email = "ac0g@hauan.org"}
 ]
 license = "MIT"
 requires-python = ">=3.9"

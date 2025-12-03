@@ -275,7 +275,7 @@ with RadiodControl("radiod.local") as control:
 ## 👏 Credits
 
 - Based on ka9q-radio by Phil Karn KA9Q
-- Developed by Michael J. Hauan AC0G
+- Developed by Michael Hauan AC0G
 - Code review and improvements: November 2025
 
 ---

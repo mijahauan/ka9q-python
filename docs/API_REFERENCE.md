@@ -1388,7 +1388,7 @@ control.create_channel(ssrc=-1, ...)  # Raises ValidationError immediately
 ```python
 import ka9q
 print(ka9q.__version__)  # "2.2.0"
-print(ka9q.__author__)   # "Michael J. Hauan"
+print(ka9q.__author__)   # "Michael Hauan AC0G"
 ```
 
 ---

@@ -234,6 +234,14 @@ def discover_channels_native(status_address: str, listen_duration: float = 2.0,
                 logger.debug("Discovery socket closed successfully")
             except Exception as e:
                 logger.warning(f"Error closing discovery socket: {e}")
+        
+        # Clean up temporary RadiodControl instance
+        if temp_control:
+            try:
+                temp_control.close()
+                logger.debug("Temporary control instance closed")
+            except Exception as e:
+                logger.debug(f"Error closing temporary control: {e}")
     
     return channels
 

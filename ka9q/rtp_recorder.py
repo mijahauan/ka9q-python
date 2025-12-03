@@ -390,8 +390,8 @@ class RTPRecorder:
             if self.socket:
                 try:
                     self.socket.close()
-                except:
-                    pass
+                except Exception:
+                    pass  # Ignore errors during cleanup
                 self.socket = None
     
     def start(self):
@@ -443,3 +443,15 @@ class RTPRecorder:
     def reset_metrics(self):
         """Reset all metrics"""
         self.metrics = RecordingMetrics()
+    
+    def __del__(self):
+        """
+        Ensure recorder is stopped on garbage collection
+        
+        This provides a safety net for unclosed recorders and helps
+        detect resource leaks during development.
+        """
+        try:
+            self.stop()
+        except Exception:
+            pass  # Can't raise exceptions in __del__

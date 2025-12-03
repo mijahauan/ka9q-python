@@ -11,12 +11,12 @@ readme = Path(__file__).parent / 'README.md'
 long_description = readme.read_text() if readme.exists() else ''
 
 setup(
-    name='ka9q',
+    name='ka9q-python',
     version='3.2.0',
     description='Python interface for ka9q-radio control and monitoring',
     long_description=long_description,
     long_description_content_type='text/markdown',
-    author='Michael J. Hauan',
+    author='Michael Hauan AC0G',
     author_email='ac0g@hauan.org',
     url='https://github.com/mijahauan/ka9q-python',
     packages=find_packages(),

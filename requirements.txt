@@ -1,0 +1,4 @@
+# ka9q-python Runtime Dependencies
+# Install with: pip install -r requirements.txt
+
+numpy>=1.24.0

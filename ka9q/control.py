@@ -2280,4 +2280,16 @@ class RadiodControl:
         if errors:
             error_msg = "; ".join(errors)
             logger.warning(f"Errors during socket cleanup: {error_msg}")
+    
+    def __del__(self):
+        """
+        Ensure resources are cleaned up on garbage collection
+        
+        This provides a safety net for unclosed connections and helps
+        detect resource leaks during development.
+        """
+        try:
+            self.close()
+        except Exception:
+            pass  # Can't raise exceptions in __del__
 

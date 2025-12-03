@@ -224,8 +224,8 @@ class RadiodStream:
             if self._socket:
                 try:
                     self._socket.close()
-                except:
-                    pass
+                except Exception:
+                    pass  # Ignore errors during cleanup
                 self._socket = None
     
     def _process_packet(self, data: bytes):
@@ -379,3 +379,15 @@ class RadiodStream:
     def get_quality(self) -> StreamQuality:
         """Get current quality metrics (copy)."""
         return self.quality.copy()
+    
+    def __del__(self):
+        """
+        Ensure stream is stopped on garbage collection
+        
+        This provides a safety net for unclosed streams and helps
+        detect resource leaks during development.
+        """
+        try:
+            self.stop()
+        except Exception:
+            pass  # Can't raise exceptions in __del__

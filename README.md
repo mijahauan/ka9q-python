@@ -1,11 +1,13 @@
 # ka9q-python
 
-[![PyPI version](https://badge.fury.io/py/ka9q.svg)](https://badge.fury.io/py/ka9q)
+[![PyPI version](https://badge.fury.io/py/ka9q-python.svg)](https://badge.fury.io/py/ka9q-python)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 **General-purpose Python library for controlling [ka9q-radio](https://github.com/ka9q/ka9q-radio)**
 
 Control radiod channels for any application: AM/FM/SSB radio, WSPR monitoring, SuperDARN radar, CODAR oceanography, HF fax, satellite downlinks, and more.
+
+**Note:** Package name is `ka9q-python` out of respect for KA9Q (Phil Karn's callsign). Import as `import ka9q`.
 
 ## Table of Contents
 
@@ -32,7 +34,7 @@ Control radiod channels for any application: AM/FM/SSB radio, WSPR monitoring, S
 ## Installation
 
 ```bash
-pip install ka9q
+pip install ka9q-python
 ```
 
 Or install from source:
