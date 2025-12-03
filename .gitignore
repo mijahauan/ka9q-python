@@ -27,6 +27,9 @@ share/python-wheels/
 *.egg
 MANIFEST
 
+# Build artifacts (if in root)
+ka9q.egg-info/
+
 # PyInstaller
 *.manifest
 *.spec
