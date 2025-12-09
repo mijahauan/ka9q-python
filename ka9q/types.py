@@ -150,12 +150,13 @@ class StatusType:
 # Command packet type
 CMD = 1
 
-# Encoding types (from ka9q-radio)
+# Encoding types - must match enum encoding in ka9q-radio/src/rtp.h
 class Encoding:
-    """Output encoding types"""
+    """Output encoding types - values must match ka9q-radio/src/rtp.h enum encoding"""
     NO_ENCODING = 0
-    S16BE = 1  # Signed 16-bit big-endian
-    S16LE = 2  # Signed 16-bit little-endian
-    F32 = 3    # 32-bit float
-    F16 = 4    # 16-bit float
-    OPUS = 5   # Opus codec
+    S16LE = 1  # Signed 16-bit little-endian
+    S16BE = 2  # Signed 16-bit big-endian
+    OPUS = 3   # Opus codec
+    F32 = 4    # 32-bit float (F32LE in C)
+    AX25 = 5   # AX.25 packet
+    F16 = 6    # 16-bit float (F16LE in C)
