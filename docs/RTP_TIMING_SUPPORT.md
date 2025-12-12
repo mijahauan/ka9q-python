@@ -65,7 +65,7 @@ def rtp_to_wallclock(rtp_timestamp, channel):
     BILLION = 1_000_000_000
     
     # Convert GPS nanoseconds to Unix time
-    sender_time = channel.gps_time + BILLION * (UNIX_EPOCH - GPS_UTC_OFFSET)
+    sender_time = channel.gps_time + BILLION * GPS_UTC_OFFSET
     
     # Add offset from RTP timestamp difference
     rtp_delta = int(rtp_timestamp) - int(channel.rtp_timesnap)

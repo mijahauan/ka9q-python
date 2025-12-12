@@ -1,5 +1,11 @@
 # Changelog
 
+## [3.2.1] - 2025-12-11
+
+### Fixed
+- **Time Calculation** - Fixed GPS-to-Unix time conversion in `rtp_to_wallclock()`. Previous formula incorrectly applied NTP epoch offset, resulting in future timestamps.
+- **Documentation** - Updated `RTP_TIMING_SUPPORT.md` with the correct formula.
+
 ## [3.2.0] - 2025-12-01
 
 ### 🌊 RadiodStream API - Continuous Sample Delivery with Quality Tracking

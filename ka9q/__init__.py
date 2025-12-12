@@ -22,7 +22,7 @@ Basic usage:
         ssrc = allocate_ssrc(10.0e6, "iq", 16000)
 """
 
-__version__ = '3.2.0'
+__version__ = '3.2.1'
 __author__ = 'Michael Hauan AC0G'
 
 from .control import RadiodControl, allocate_ssrc
