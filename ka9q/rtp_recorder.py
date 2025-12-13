@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 GPS_UTC_OFFSET = 315964800  # GPS epoch (1980-01-06) - Unix epoch (1970-01-01)  
 UNIX_EPOCH = 2208988800     # Unix epoch in NTP seconds
 BILLION = 1_000_000_000
+GPS_LEAP_SECONDS = 18   # GPS time is ahead of UTC by 18 seconds (as of 2025)
 
 
 class RecorderState(Enum):
@@ -142,7 +143,8 @@ def rtp_to_wallclock(rtp_timestamp: int, channel: ChannelInfo) -> Optional[float
     # Convert GPS nanoseconds to Unix time
     # GPS epoch is Jan 6, 1980; Unix epoch is Jan 1, 1970
     # gps_time is nanoseconds since GPS epoch, so add GPS_UTC_OFFSET (in ns)
-    sender_time = channel.gps_time + BILLION * GPS_UTC_OFFSET
+    # AND subtract current GPS_LEAP_SECONDS (18s) to align with UTC
+    sender_time = channel.gps_time + BILLION * (GPS_UTC_OFFSET - GPS_LEAP_SECONDS)
     
     # Add offset from RTP timestamp difference
     # Cast to int32 for proper wrapping behavior

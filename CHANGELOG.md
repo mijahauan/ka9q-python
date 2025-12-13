@@ -1,5 +1,10 @@
 # Changelog
 
+## [3.2.2] - 2025-12-13
+
+### Fixed
+- **Time Calculation** - Fixed 18-second error in UTC timestamp calculation caused by leap seconds. `rtp_to_wallclock()` now correctly subtracts the current 18-second GPS-UTC offset.
+
 ## [3.2.1] - 2025-12-11
 
 ### Fixed

@@ -30,7 +30,8 @@ def test_rtp_to_wallclock():
     
     # Case 1: Same RTP timestamp as snapshot
     # Result should be exactly GPS time + offset
-    expected_unix_ns = gps_time_ns + (GPS_UTC_OFFSET * BILLION)
+    # Expected Unix time = GPS time + Offset - Leap Seconds
+    expected_unix_ns = gps_time_ns + (BILLION * (GPS_UTC_OFFSET - 18))
     expected_unix_sec = expected_unix_ns / BILLION
     
     assert rtp_to_wallclock(1000, channel) == pytest.approx(expected_unix_sec)
