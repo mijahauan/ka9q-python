@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.2.4] - 2025-12-16
+
+### Fixed
+- **Resequencer Fragmented IQ Support** - Fixed resequencer to correctly handle fragmented IQ packets from radiod. The resequencer now uses actual packet sample count for timestamp tracking instead of the fixed `samples_per_packet` value. This prevents false gap detection when radiod fragments large IQ payloads (e.g., IQ 20kHz F32 fragments into 1440+1440+320 byte packets). Affects `_try_output()`, `_handle_lost_packet()`, and `flush()` methods.
+
+### Added
+- **Channel Verification Test Suite** - Comprehensive test suite (`tests/test_channel_verification.py`) that verifies radiod channel creation, encoding, sample rate, and destination configuration. Demonstrates ka9q-python usage patterns and serves as integration test.
+
 ## [3.2.3] - 2025-12-16
 
 ### Fixed

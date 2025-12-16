@@ -9,6 +9,16 @@ Key behaviors:
 - Detects gaps via RTP timestamp jumps
 - Fills gaps with zeros to maintain sample count integrity
 - Tracks quality metrics for downstream applications
+- Handles fragmented IQ packets (uses actual packet sample count for timestamp tracking)
+
+Fragmented IQ support:
+  radiod fragments large IQ packets to fit within UDP MTU limits.
+  Each fragment has a timestamp that reflects the samples it contains.
+  For example, IQ 16kHz F32 (320 samples/20ms = 2560 bytes) fragments into:
+    - Fragment 1: 1440 bytes = 180 samples, ts_inc=180
+    - Fragment 2: 1120 bytes = 140 samples, ts_inc=140
+  The resequencer uses actual packet sample count (not nominal samples_per_packet)
+  for timestamp tracking to correctly handle these fragmented streams.
 
 Design principle: Sample count integrity > real-time delivery
 """
@@ -209,8 +219,12 @@ class PacketResequencer:
             output_samples.append(next_pkt.samples)
             
             # Update state
+            # Use actual packet sample count for timestamp tracking
+            # This handles fragmented IQ packets where each fragment has fewer
+            # samples than the nominal samples_per_packet
+            actual_samples = len(next_pkt.samples)
             self.next_expected_seq = (next_pkt.sequence + 1) & 0xFFFF
-            self.next_expected_ts = next_pkt.timestamp + self.samples_per_packet
+            self.next_expected_ts = next_pkt.timestamp + actual_samples
         
         # Combine output
         if output_samples:
@@ -317,9 +331,10 @@ class PacketResequencer:
         self.buffer_seq_nums.discard(earliest.sequence)
         output_samples.append(earliest.samples)
         
-        # Update state
+        # Update state - use actual packet sample count for fragmented packets
+        actual_samples = len(earliest.samples)
         self.next_expected_seq = (earliest.sequence + 1) & 0xFFFF
-        self.next_expected_ts = earliest.timestamp + self.samples_per_packet
+        self.next_expected_ts = earliest.timestamp + actual_samples
         self.stats.packets_resequenced += 1
         
         combined = np.concatenate(output_samples) if output_samples else None
@@ -356,7 +371,8 @@ class PacketResequencer:
                     output_samples.append(gap_fill)
             
             output_samples.append(pkt.samples)
-            self.next_expected_ts = pkt.timestamp + self.samples_per_packet
+            # Use actual packet sample count for fragmented packets
+            self.next_expected_ts = pkt.timestamp + len(pkt.samples)
         
         # Clear buffer
         self.buffer.clear()
