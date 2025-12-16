@@ -1,5 +1,10 @@
 # Changelog
 
+## [3.2.3] - 2025-12-16
+
+### Fixed
+- **Socket Reconnection Vulnerability** - Fixed vulnerability where socket errors would terminate the receive loop permanently. Both `RadiodStream` and `RTPRecorder` now implement automatic reconnection with exponential backoff (1s to 60s max). This provides robustness against network interface restarts, multicast group membership drops, and transient network errors.
+
 ## [3.2.2] - 2025-12-13
 
 ### Fixed

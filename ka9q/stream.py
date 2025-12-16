@@ -31,6 +31,7 @@ import socket
 import struct
 import logging
 import threading
+import time
 import numpy as np
 from datetime import datetime, timezone
 from typing import Optional, Callable, List
@@ -103,6 +104,11 @@ class RadiodStream:
         self._socket: Optional[socket.socket] = None
         self._running = False
         self._thread: Optional[threading.Thread] = None
+        
+        # Reconnection state for robustness
+        self._reconnect_backoff = 1.0  # Initial backoff in seconds
+        self._max_reconnect_backoff = 60.0  # Max backoff
+        self._consecutive_errors = 0
         
         # Detect payload format from channel preset
         # IQ mode: complex64 (interleaved float32 I/Q)
@@ -205,28 +211,72 @@ class RadiodStream:
         return sock
     
     def _receive_loop(self):
-        """Main packet receiving loop."""
-        try:
-            self._socket = self._create_socket()
-            
-            while self._running:
-                try:
-                    data, addr = self._socket.recvfrom(8192)
-                    self._process_packet(data)
-                    
-                except socket.timeout:
-                    continue
-                except Exception as e:
-                    if self._running:
-                        logger.error(f"Receive error: {e}", exc_info=True)
+        """Main packet receiving loop with automatic reconnection.
         
-        finally:
-            if self._socket:
-                try:
-                    self._socket.close()
-                except Exception:
-                    pass  # Ignore errors during cleanup
-                self._socket = None
+        Handles socket errors by attempting to recreate the socket with
+        exponential backoff. This provides robustness against:
+        - Network interface restarts
+        - Multicast group membership drops
+        - Transient network errors
+        """
+        while self._running:
+            try:
+                # Create socket if needed
+                if self._socket is None:
+                    self._socket = self._create_socket()
+                    self._reconnect_backoff = 1.0  # Reset backoff on success
+                    self._consecutive_errors = 0
+                
+                # Receive packet
+                data, addr = self._socket.recvfrom(8192)
+                self._process_packet(data)
+                self._consecutive_errors = 0  # Reset on successful receive
+                
+            except socket.timeout:
+                continue
+                
+            except OSError as e:
+                # Socket error - attempt reconnection
+                if not self._running:
+                    break
+                
+                self._consecutive_errors += 1
+                logger.error(
+                    f"Socket error (attempt {self._consecutive_errors}): {e}",
+                    exc_info=True
+                )
+                
+                # Close broken socket
+                if self._socket:
+                    try:
+                        self._socket.close()
+                    except Exception:
+                        pass
+                    self._socket = None
+                
+                # Exponential backoff before reconnection
+                logger.info(
+                    f"Attempting socket reconnection in {self._reconnect_backoff:.1f}s..."
+                )
+                time.sleep(self._reconnect_backoff)
+                
+                # Increase backoff for next attempt (capped at max)
+                self._reconnect_backoff = min(
+                    self._reconnect_backoff * 2,
+                    self._max_reconnect_backoff
+                )
+                
+            except Exception as e:
+                if self._running:
+                    logger.error(f"Receive error: {e}", exc_info=True)
+        
+        # Cleanup on exit
+        if self._socket:
+            try:
+                self._socket.close()
+            except Exception:
+                pass
+            self._socket = None
     
     def _process_packet(self, data: bytes):
         """Process a received RTP packet."""

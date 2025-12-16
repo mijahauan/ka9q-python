@@ -218,6 +218,11 @@ class RTPRecorder:
         self.socket: Optional[socket.socket] = None
         self.running = False
         self.thread: Optional[threading.Thread] = None
+        
+        # Reconnection state for robustness
+        self._reconnect_backoff = 1.0  # Initial backoff in seconds
+        self._max_reconnect_backoff = 60.0  # Max backoff
+        self._consecutive_errors = 0
     
     def _change_state(self, new_state: RecorderState):
         """Change state and trigger callback"""
@@ -350,53 +355,97 @@ class RTPRecorder:
         return True
     
     def _receive_loop(self):
-        """Main packet receiving loop"""
-        try:
-            self.socket = self._create_socket()
-            
-            while self.running:
-                try:
-                    data, addr = self.socket.recvfrom(8192)
-                    
-                    self.metrics.packets_received += 1
-                    self.metrics.bytes_received += len(data)
-                    
-                    # Parse RTP header
-                    header = parse_rtp_header(data)
-                    if not header:
-                        logger.debug("Invalid RTP packet")
-                        continue
-                    
-                    # Validate packet
-                    if not self._validate_packet(header):
-                        continue
-                    
-                    # Extract payload (skip RTP header + CSRC)
-                    header_len = 12 + (4 * header.csrc_count)
-                    payload = data[header_len:]
-                    
-                    # Compute wall-clock time
-                    wallclock = rtp_to_wallclock(header.timestamp, self.channel)
-                    
-                    # Call packet callback
-                    if self.on_packet:
-                        try:
-                            self.on_packet(header, payload, wallclock)
-                        except Exception as e:
-                            logger.error(f"Error in packet callback: {e}", exc_info=True)
+        """Main packet receiving loop with automatic reconnection.
+        
+        Handles socket errors by attempting to recreate the socket with
+        exponential backoff. This provides robustness against:
+        - Network interface restarts
+        - Multicast group membership drops
+        - Transient network errors
+        """
+        while self.running:
+            try:
+                # Create socket if needed
+                if self.socket is None:
+                    self.socket = self._create_socket()
+                    self._reconnect_backoff = 1.0  # Reset backoff on success
+                    self._consecutive_errors = 0
                 
-                except socket.timeout:
+                data, addr = self.socket.recvfrom(8192)
+                
+                self.metrics.packets_received += 1
+                self.metrics.bytes_received += len(data)
+                self._consecutive_errors = 0  # Reset on successful receive
+                
+                # Parse RTP header
+                header = parse_rtp_header(data)
+                if not header:
+                    logger.debug("Invalid RTP packet")
                     continue
-                except Exception as e:
+                
+                # Validate packet
+                if not self._validate_packet(header):
+                    continue
+                
+                # Extract payload (skip RTP header + CSRC)
+                header_len = 12 + (4 * header.csrc_count)
+                payload = data[header_len:]
+                
+                # Compute wall-clock time
+                wallclock = rtp_to_wallclock(header.timestamp, self.channel)
+                
+                # Call packet callback
+                if self.on_packet:
+                    try:
+                        self.on_packet(header, payload, wallclock)
+                    except Exception as e:
+                        logger.error(f"Error in packet callback: {e}", exc_info=True)
+            
+            except socket.timeout:
+                continue
+                
+            except OSError as e:
+                # Socket error - attempt reconnection
+                if not self.running:
+                    break
+                
+                self._consecutive_errors += 1
+                logger.error(
+                    f"Socket error (attempt {self._consecutive_errors}): {e}",
+                    exc_info=True
+                )
+                
+                # Close broken socket
+                if self.socket:
+                    try:
+                        self.socket.close()
+                    except Exception:
+                        pass
+                    self.socket = None
+                
+                # Exponential backoff before reconnection
+                logger.info(
+                    f"Attempting socket reconnection in {self._reconnect_backoff:.1f}s..."
+                )
+                time.sleep(self._reconnect_backoff)
+                
+                # Increase backoff for next attempt (capped at max)
+                self._reconnect_backoff = min(
+                    self._reconnect_backoff * 2,
+                    self._max_reconnect_backoff
+                )
+                
+            except Exception as e:
+                if self.running:
                     logger.error(f"Error receiving packet: {e}", exc_info=True)
         
-        finally:
-            if self.socket:
-                try:
-                    self.socket.close()
-                except Exception:
-                    pass  # Ignore errors during cleanup
-                self.socket = None
+        # Cleanup on exit
+        if self.socket:
+            try:
+                self.socket.close()
+            except Exception:
+                pass
+            self.socket = None
     
     def start(self):
         """Start receiving RTP packets"""
