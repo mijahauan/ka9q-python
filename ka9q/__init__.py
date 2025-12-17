@@ -5,12 +5,29 @@ A general-purpose library for controlling ka9q-radio channels and streams.
 No assumptions about your application - works for everything from AM radio
 listening to SuperDARN radar monitoring.
 
-Basic usage:
+Recommended usage (high-level API):
+    from ka9q import RadiodControl, RadiodStream
+    
+    with RadiodControl("radiod.local") as control:
+        # Request a channel with specific characteristics
+        # ka9q-python handles discovery, creation, and verification
+        channel = control.ensure_channel(
+            frequency_hz=14.074e6,
+            preset="usb",
+            sample_rate=12000
+        )
+        # Channel is verified and ready for streaming
+        print(f"Channel ready: {channel.frequency/1e6:.3f} MHz")
+        
+        # Start receiving samples
+        stream = RadiodStream(channel, on_samples=my_callback)
+        stream.start()
+
+Lower-level usage (explicit control):
     from ka9q import RadiodControl, allocate_ssrc
     
-    # Use context manager for automatic cleanup
     with RadiodControl("radiod.local") as control:
-        # SSRC-free API (recommended) - SSRC auto-allocated
+        # SSRC-free API - SSRC auto-allocated
         ssrc = control.create_channel(
             frequency_hz=10.0e6,
             preset="am",
@@ -21,8 +38,7 @@ Basic usage:
         # Or use allocate_ssrc() directly for coordination
         ssrc = allocate_ssrc(10.0e6, "iq", 16000)
 """
-
-__version__ = '3.2.1'
+__version__ = '3.2.5'
 __author__ = 'Michael Hauan AC0G'
 
 from .control import RadiodControl, allocate_ssrc
@@ -95,4 +111,7 @@ __all__ = [
     'PacketResequencer',
     'RTPPacket',
     'ResequencerStats',
+    'generate_multicast_ip',
 ]
+
+from .addressing import generate_multicast_ip

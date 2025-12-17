@@ -1,0 +1,3 @@
+### Fixed
+- **Time Calculation** - Fixed GPS-to-Unix time conversion in `rtp_to_wallclock()`. Previous formula incorrectly applied NTP epoch offset, resulting in future timestamps.
+- **Documentation** - Updated `RTP_TIMING_SUPPORT.md` with the correct formula.

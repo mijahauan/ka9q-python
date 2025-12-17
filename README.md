@@ -158,6 +158,9 @@ For detailed information, please refer to the documentation in the `docs/` direc
 
 See the `examples/` directory for complete applications:
 
+- **High-Level API**: `ensure_channel()` handles the complexity of checking existing channels, creating new ones only when necessary, and verifying configurations.
+- **Destination-Aware Channels**: Support for unique per-application multicast destinations and deterministic IP generation.
+- **Stream Sharing**: Deterministic SSRC allocation allows multiple independent applications to share `radiod` streams efficiently.
 - **`discover_example.py`** - Channel discovery methods (native Python and control utility)
 - **`tune.py`** - Interactive channel tuning utility (Python implementation of ka9q-radio's tune)
 - **`tune_example.py`** - Programmatic examples of using the tune() method

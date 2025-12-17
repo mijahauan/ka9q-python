@@ -449,9 +449,12 @@ def _decode_escape_sequences(s: str) -> str:
     return s
 
 
-def discover_radiod_services():
+def discover_radiod_services(timeout: float = 10.0):
     """
     Discover all radiod services on the network via mDNS
+    
+    Args:
+        timeout: Maximum time to wait for avahi-browse (default 10 seconds)
     
     Returns:
         List of dicts with "name" and "address" keys
@@ -465,7 +468,7 @@ def discover_radiod_services():
             ["avahi-browse", "-t", "_ka9q-ctl._udp", "-p", "-r"],
             capture_output=True,
             text=True,
-            timeout=5
+            timeout=timeout
         )
         
         for line in result.stdout.split("\n"):

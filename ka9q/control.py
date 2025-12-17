@@ -72,7 +72,8 @@ def allocate_ssrc(
     preset: str = "iq",
     sample_rate: int = 16000,
     agc: bool = False,
-    gain: float = 0.0
+    gain: float = 0.0,
+    destination: Optional[str] = None
 ) -> int:
     """
     Allocate a deterministic SSRC from channel parameters.
@@ -108,7 +109,8 @@ def allocate_ssrc(
         preset.lower(),           # Preset normalized to lowercase
         sample_rate,              # Sample rate as-is
         agc,                      # AGC boolean
-        round(gain, 1)            # Gain rounded to 0.1 dB
+        round(gain, 1),           # Gain rounded to 0.1 dB
+        destination               # Destination address (None or string)
     )
     # Keep positive, 31 bits (matches signal-recorder)
     return hash(key) & 0x7FFFFFFF
@@ -1237,6 +1239,198 @@ class RadiodControl:
         
         logger.info(f"Channel {ssrc} verified: {channel.frequency/1e6:.3f} MHz, {channel.preset}")
         return True
+    
+    def ensure_channel(
+        self,
+        frequency_hz: float,
+        preset: str = "iq",
+        sample_rate: int = 16000,
+        agc_enable: int = 0,
+        gain: float = 0.0,
+        destination: Optional[str] = None,
+        timeout: float = 5.0,
+        frequency_tolerance: float = 1.0,
+    ):
+        """
+        Ensure a channel exists with the requested characteristics and return it.
+        
+        This is the recommended high-level API for client applications. It provides
+        a simple contract: "deliver me a channel with these characteristics" and
+        returns a verified ChannelInfo ready for use with RadiodStream.
+        
+        The method:
+        1. Computes a deterministic SSRC from the channel parameters (including destination)
+        2. Checks if a matching channel already exists (enables stream sharing)
+        3. Creates the channel if it doesn't exist
+        4. Verifies the channel meets the requested specifications
+        5. Returns a ChannelInfo object ready for RTP stream consumption
+        
+        Args:
+            frequency_hz: Center frequency in Hz
+            preset: Demodulation mode ("iq", "usb", "lsb", "am", "fm", "cw")
+            sample_rate: Output sample rate in Hz (default: 16000)
+            agc_enable: Enable automatic gain control (0=off, 1=on, default: 0)
+            gain: Manual gain in dB (default: 0.0). Only used when agc_enable=0
+            destination: RTP destination multicast address (optional).
+                        If not specified, uses radiod's default from config file.
+                        If specified, becomes part of the channel identity (SSRC).
+            timeout: Maximum time to wait for channel verification (default: 5.0s)
+            frequency_tolerance: Acceptable frequency deviation in Hz (default: 1.0)
+        
+        Returns:
+            ChannelInfo object with verified channel details, ready for RadiodStream
+        
+        Raises:
+            TimeoutError: If channel cannot be verified within timeout
+            ValidationError: If parameters are invalid
+            CommandError: If radiod communication fails
+        
+        Example:
+            >>> from ka9q import RadiodControl, RadiodStream
+            >>> 
+            >>> with RadiodControl("radiod.local") as control:
+            ...     # Request a channel - ka9q-python handles all the details
+            ...     channel = control.ensure_channel(
+            ...         frequency_hz=14.074e6,
+            ...         preset="usb",
+            ...         sample_rate=12000
+            ...     )
+            ...     print(f"Channel ready: {channel.frequency/1e6:.3f} MHz")
+            ...     
+            ...     # Channel is verified and ready for streaming
+            ...     stream = RadiodStream(channel, on_samples=my_callback)
+            ...     stream.start()
+        
+        Note:
+            The deterministic SSRC allocation enables stream sharing: multiple
+            applications requesting the same parameters will share the same
+            channel, reducing radiod resource usage.
+        """
+        from .discovery import ChannelInfo, discover_channels
+        
+        # Validate inputs
+        _validate_frequency(frequency_hz)
+        _validate_sample_rate(sample_rate)
+        _validate_gain(gain)
+        _validate_preset(preset)
+        _validate_timeout(timeout)
+        
+        # Compute deterministic SSRC from parameters
+        ssrc = allocate_ssrc(
+            frequency_hz=frequency_hz,
+            preset=preset,
+            sample_rate=sample_rate,
+            agc=bool(agc_enable),
+            gain=gain,
+            destination=destination
+        )
+        logger.info(f"ensure_channel: computed SSRC {ssrc} for {frequency_hz/1e6:.3f} MHz {preset} dest={destination}")
+        
+        # Check if channel already exists with matching parameters
+        existing_channels = discover_channels(self.status_address, listen_duration=1.0)
+        
+        if ssrc in existing_channels:
+            existing = existing_channels[ssrc]
+            # Verify existing channel meets specs
+            if abs(existing.frequency - frequency_hz) <= frequency_tolerance:
+                if existing.sample_rate == sample_rate:
+                    # Check destination if requested
+                    dest_ok = True
+                    if destination:
+                        # Existing destination might be "ip" or "ip:port" or "hostname"
+                        # Simple check: if requested is in existing string
+                        # Ideally we'd parse both, but string containment is a safe basic check
+                        if destination not in (existing.multicast_address or ""):
+                            dest_ok = False
+                    
+                    if dest_ok:
+                        logger.info(
+                            f"ensure_channel: reusing existing channel SSRC {ssrc} "
+                            f"at {existing.frequency/1e6:.3f} MHz"
+                        )
+                        return existing
+                    else:
+                        logger.info(
+                            f"ensure_channel: existing channel destination mismatch "
+                            f"({existing.multicast_address} vs {destination}), will reconfigure"
+                        )
+                else:
+                    logger.info(
+                        f"ensure_channel: existing channel has different sample rate "
+                        f"({existing.sample_rate} vs {sample_rate}), will reconfigure"
+                    )
+            else:
+                logger.info(
+                    f"ensure_channel: existing channel frequency mismatch "
+                    f"({existing.frequency/1e6:.3f} vs {frequency_hz/1e6:.3f} MHz), will reconfigure"
+                )
+        
+        # Create or reconfigure the channel
+        logger.info(f"ensure_channel: creating/configuring channel SSRC {ssrc}")
+        self.create_channel(
+            frequency_hz=frequency_hz,
+            preset=preset,
+            sample_rate=sample_rate,
+            agc_enable=agc_enable,
+            gain=gain,
+            destination=destination,
+            ssrc=ssrc
+        )
+        
+        # Wait for channel to appear and verify it meets specs
+        start_time = time.time()
+        verify_interval = 0.5  # Check every 500ms
+        
+        while time.time() - start_time < timeout:
+            # Give radiod time to process the command
+            time.sleep(verify_interval)
+            
+            # Discover channels and look for ours
+            channels = discover_channels(self.status_address, listen_duration=1.0)
+            
+            if ssrc in channels:
+                channel = channels[ssrc]
+                
+                # Verify frequency
+                freq_ok = abs(channel.frequency - frequency_hz) <= frequency_tolerance
+                # Verify sample rate
+                rate_ok = channel.sample_rate == sample_rate
+                # Verify preset (case-insensitive)
+                preset_ok = channel.preset.lower() == preset.lower()
+                # Verify destination if requested
+                dest_ok = True
+                if destination:
+                     # Check if destination IP is present in channel's multicast address
+                     # (Allows for port differences or hostname resolution)
+                     dest_ok = destination in (channel.multicast_address or "")
+                
+                if freq_ok and rate_ok and preset_ok and dest_ok:
+                    logger.info(
+                        f"ensure_channel: verified channel SSRC {ssrc} - "
+                        f"{channel.frequency/1e6:.3f} MHz, {channel.preset}, "
+                        f"{channel.sample_rate} Hz"
+                    )
+                    return channel
+                else:
+                    # Channel exists but doesn't match - log details
+                    issues = []
+                    if not freq_ok:
+                        issues.append(f"freq={channel.frequency/1e6:.3f} (want {frequency_hz/1e6:.3f})")
+                    if not rate_ok:
+                        issues.append(f"rate={channel.sample_rate} (want {sample_rate})")
+                    if not preset_ok:
+                        issues.append(f"preset={channel.preset} (want {preset})")
+                    if not dest_ok:
+                        issues.append(f"dest={channel.multicast_address} (want {destination})")
+                    logger.debug(f"ensure_channel: channel mismatch: {', '.join(issues)}")
+            
+            # Increase interval with backoff (cap at 1s)
+            verify_interval = min(verify_interval * 1.5, 1.0)
+        
+        raise TimeoutError(
+            f"Channel SSRC {ssrc} not verified within {timeout}s. "
+            f"Requested: {frequency_hz/1e6:.3f} MHz, {preset}, {sample_rate} Hz"
+        )
     
     def remove_channel(self, ssrc: int):
         """
