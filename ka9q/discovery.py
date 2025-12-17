@@ -32,6 +32,7 @@ class ChannelInfo:
     port: int
     gps_time: Optional[int] = None  # GPS nanoseconds when RTP_TIMESNAP was captured
     rtp_timesnap: Optional[int] = None  # RTP timestamp at GPS_TIME
+    encoding: int = 0  # stream encoding (0=none, 4=F32, etc)
 
 
 def _create_status_listener_socket(multicast_addr: str, interface: Optional[str] = None) -> socket.socket:
@@ -206,7 +207,8 @@ def discover_channels_native(status_address: str, listen_duration: float = 2.0,
                 multicast_address=mcast_addr,
                 port=port,
                 gps_time=status.get('gps_time'),
-                rtp_timesnap=status.get('rtp_timesnap')
+                rtp_timesnap=status.get('rtp_timesnap'),
+                encoding=status.get('encoding', 0)
             )
             
             # Store or update channel info
@@ -316,7 +318,8 @@ def discover_channels_via_control(status_address: str, timeout: float = 30.0) ->
                     frequency=frequency,
                     snr=snr,
                     multicast_address=addr,
-                    port=port
+                    port=port,
+                    encoding=0  # Control utility text output may not include encoding explicitly
                 )
                 
                 channels[ssrc] = channel

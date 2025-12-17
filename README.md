@@ -64,6 +64,22 @@ control.create_channel(
 )
 
 # RTP stream now available with SSRC 10000000
+
+### Request Specific Output Encoding
+
+```python
+from ka9q import RadiodControl, Encoding
+
+control = RadiodControl("radiod.local")
+
+# Create a channel with 32-bit float output (highest quality)
+control.ensure_channel(
+    frequency_hz=14.074e6,
+    preset="usb",
+    sample_rate=12000,
+    encoding=Encoding.F32
+)
+```
 ```
 
 ### Monitor WSPR Bands

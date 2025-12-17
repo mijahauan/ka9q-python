@@ -662,12 +662,11 @@ def verify_channel(
     )
     
     try:
-        # 1. Create and configure channel using tune()
-        # tune() supports encoding parameter and returns status
+        # 1. Create and configure channel using ensure_channel()
+        # This tests the high-level API which handles encoding commands
         logger.info(f"Creating channel: {test_case.name} (SSRC {ssrc})")
         
-        tune_kwargs = {
-            'ssrc': ssrc,
+        ensure_kwargs = {
             'frequency_hz': test_case.frequency_hz,
             'preset': test_case.preset,
             'sample_rate': test_case.sample_rate,
@@ -676,28 +675,37 @@ def verify_channel(
         
         # Add gain/AGC settings
         if test_case.agc_enable:
-            tune_kwargs['agc_enable'] = True
+            ensure_kwargs['agc_enable'] = 1
         else:
-            tune_kwargs['gain'] = test_case.gain
+            ensure_kwargs['gain'] = test_case.gain
         
         # Add encoding if specified
         if test_case.encoding is not None:
-            tune_kwargs['encoding'] = test_case.encoding
+            ensure_kwargs['encoding'] = test_case.encoding
         
         # Add destination if specified
         if test_case.destination is not None:
-            tune_kwargs['destination'] = test_case.destination
-        
+            ensure_kwargs['destination'] = test_case.destination
+            
         try:
-            status = control.tune(**tune_kwargs)
+            # ensure_channel returns the discovered ChannelInfo
+            channel_info = control.ensure_channel(**ensure_kwargs)
             result.channel_created = True
-            logger.info(f"tune() returned status: {status}")
+            
+            # Since ensure_channel doesn't return the raw status dict from tune,
+            # we'll synthesize a status dict for subsequent checks or rely on discovery
+            status = {
+                'ssrc': channel_info.ssrc,
+                'frequency': channel_info.frequency,
+                'encoding': getattr(channel_info, 'encoding', 0),
+                # Add other fields if needed for compatibility
+            }
+            logger.info(f"ensure_channel returned: {channel_info}")
         except TimeoutError:
             # Channel may have been created but status not received
-            # Try to verify via discovery
-            result.channel_created = True
+            result.channel_created = False # ensure_channel should have raised if verification failed
             status = {}
-            logger.warning("tune() timed out waiting for status, continuing with discovery")
+            logger.warning("ensure_channel timed out")
         
         # Wait for channel to stabilize
         time.sleep(0.5)

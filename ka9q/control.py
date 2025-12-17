@@ -73,7 +73,8 @@ def allocate_ssrc(
     sample_rate: int = 16000,
     agc: bool = False,
     gain: float = 0.0,
-    destination: Optional[str] = None
+    destination: Optional[str] = None,
+    encoding: int = 0
 ) -> int:
     """
     Allocate a deterministic SSRC from channel parameters.
@@ -110,7 +111,8 @@ def allocate_ssrc(
         sample_rate,              # Sample rate as-is
         agc,                      # AGC boolean
         round(gain, 1),           # Gain rounded to 0.1 dB
-        destination               # Destination address (None or string)
+        destination,              # Destination address (None or string)
+        encoding                  # Encoding type (int)
     )
     # Keep positive, 31 bits (matches signal-recorder)
     return hash(key) & 0x7FFFFFFF
@@ -1072,6 +1074,7 @@ class RadiodControl:
                        preset: str = "iq", sample_rate: Optional[int] = None,
                        agc_enable: int = 0, gain: float = 0.0,
                        destination: Optional[str] = None,
+                       encoding: int = 0,
                        ssrc: Optional[int] = None) -> int:
         """
         Create a new channel with specified configuration
@@ -1098,6 +1101,7 @@ class RadiodControl:
             destination: RTP destination multicast address (optional). Format: "address" or "address:port"
                         Examples: "239.1.2.3", "wspr.local", "239.1.2.3:5004"
                         If not specified, uses radiod's default from config file.
+            encoding: Output encoding (0=none, 4=F32, etc.) - see Encoding class
             ssrc: SSRC (channel identifier). If None, auto-allocated from parameters.
                   Auto-allocation uses allocate_ssrc() for deterministic, shareable SSRCs.
         
@@ -1133,7 +1137,9 @@ class RadiodControl:
                 preset=preset,
                 sample_rate=sample_rate or 16000,  # Default for allocation
                 agc=bool(agc_enable),
-                gain=gain
+                gain=gain,
+                destination=destination,
+                encoding=encoding
             )
             logger.info(f"Auto-allocated SSRC: {ssrc}")
         
@@ -1145,7 +1151,7 @@ class RadiodControl:
         _validate_gain(gain)
         
         logger.info(f"Creating channel: SSRC={ssrc}, freq={frequency_hz/1e6:.3f} MHz, "
-                   f"demod={preset}, rate={sample_rate}Hz, agc={agc_enable}, gain={gain}dB")
+                   f"demod={preset}, rate={sample_rate}Hz, agc={agc_enable}, gain={gain}dB, enc={encoding}")
         
         # Build a single command packet with ALL parameters
         # This ensures radiod creates the channel with the correct settings
@@ -1180,6 +1186,12 @@ class RadiodControl:
         encode_double(cmdbuffer, StatusType.GAIN, gain)
         logger.info(f"Setting GAIN for SSRC {ssrc} to {gain} dB")
         
+        # Encoding setting - NOT sending in main buffer anymore
+        # Radiod requires OUTPUT_ENCODING to be sent in a separate command after creation
+        # if encoding > 0:
+        #    encode_int(cmdbuffer, StatusType.OUTPUT_ENCODING, encoding)
+        #    logger.info(f"Setting OUTPUT_ENCODING for SSRC {ssrc} to {encoding}")
+        
         # Destination address (if specified)
         if destination is not None:
             _validate_multicast_address(destination)
@@ -1203,8 +1215,24 @@ class RadiodControl:
         encode_int(cmdbuffer, StatusType.COMMAND_TAG, secrets.randbits(31))
         encode_eol(cmdbuffer)
         
-        # Send the single packet
+        # Send the main creation packet
         self.send_command(cmdbuffer)
+        
+        # Send separate encoding command if requested (radiod requirement)
+        if encoding > 0:
+            encbuffer = bytearray()
+            encbuffer.append(CMD)
+            
+            # Target the SSRC we just created
+            encode_int(encbuffer, StatusType.OUTPUT_SSRC, ssrc)
+            encode_int(encbuffer, StatusType.COMMAND_TAG, secrets.randbits(31))
+            
+            # Set the encoding
+            encode_int(encbuffer, StatusType.OUTPUT_ENCODING, encoding)
+            encode_eol(encbuffer)
+            
+            self.send_command(encbuffer)
+            logger.info(f"Sent separate OUTPUT_ENCODING command for SSRC {ssrc}: {encoding}")
         
         logger.info(f"Channel {ssrc} created and configured")
         return ssrc
@@ -1248,6 +1276,7 @@ class RadiodControl:
         agc_enable: int = 0,
         gain: float = 0.0,
         destination: Optional[str] = None,
+        encoding: int = 0,
         timeout: float = 5.0,
         frequency_tolerance: float = 1.0,
     ):
@@ -1274,6 +1303,7 @@ class RadiodControl:
             destination: RTP destination multicast address (optional).
                         If not specified, uses radiod's default from config file.
                         If specified, becomes part of the channel identity (SSRC).
+            encoding: Output encoding (0=none, 4=F32, etc.) - see Encoding class
             timeout: Maximum time to wait for channel verification (default: 5.0s)
             frequency_tolerance: Acceptable frequency deviation in Hz (default: 1.0)
         
@@ -1322,9 +1352,10 @@ class RadiodControl:
             sample_rate=sample_rate,
             agc=bool(agc_enable),
             gain=gain,
-            destination=destination
+            destination=destination,
+            encoding=encoding
         )
-        logger.info(f"ensure_channel: computed SSRC {ssrc} for {frequency_hz/1e6:.3f} MHz {preset} dest={destination}")
+        logger.info(f"ensure_channel: computed SSRC {ssrc} for {frequency_hz/1e6:.3f} MHz {preset} dest={destination} enc={encoding}")
         
         # Check if channel already exists with matching parameters
         existing_channels = discover_channels(self.status_address, listen_duration=1.0)
@@ -1343,6 +1374,15 @@ class RadiodControl:
                         if destination not in (existing.multicast_address or ""):
                             dest_ok = False
                     
+                    # Check encoding if requested
+                    if dest_ok and encoding != 0:
+                        if existing.encoding != encoding:
+                            dest_ok = False
+                            logger.info(
+                                f"ensure_channel: existing channel encoding mismatch "
+                                f"({existing.encoding} vs {encoding}), will reconfigure"
+                            )
+
                     if dest_ok:
                         logger.info(
                             f"ensure_channel: reusing existing channel SSRC {ssrc} "
@@ -1351,8 +1391,7 @@ class RadiodControl:
                         return existing
                     else:
                         logger.info(
-                            f"ensure_channel: existing channel destination mismatch "
-                            f"({existing.multicast_address} vs {destination}), will reconfigure"
+                            f"ensure_channel: existing channel configuration mismatch, will reconfigure"
                         )
                 else:
                     logger.info(
@@ -1374,6 +1413,7 @@ class RadiodControl:
             agc_enable=agc_enable,
             gain=gain,
             destination=destination,
+            encoding=encoding,
             ssrc=ssrc
         )
         
