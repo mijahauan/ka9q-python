@@ -1,5 +1,11 @@
 # Changelog
 
+## [3.2.7] - 2025-12-17
+
+### Added
+- **ChannelMonitor**: New service that provides automatic recovery from `radiod` restarts. It monitors registered channels and automatically invokes `ensure_channel` to restore them if they disappear.
+    - Usage: `monitor = ChannelMonitor(control); monitor.start(); monitor.monitor_channel(...)`
+
 ## [3.2.6] - 2025-12-17
 
 ### Added

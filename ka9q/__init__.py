@@ -38,7 +38,7 @@ Lower-level usage (explicit control):
         # Or use allocate_ssrc() directly for coordination
         ssrc = allocate_ssrc(10.0e6, "iq", 16000)
 """
-__version__ = '3.2.6'
+__version__ = '3.2.7'
 __author__ = 'Michael Hauan AC0G'
 
 from .control import RadiodControl, allocate_ssrc
@@ -112,6 +112,8 @@ __all__ = [
     'RTPPacket',
     'ResequencerStats',
     'generate_multicast_ip',
+    'ChannelMonitor',
 ]
 
 from .addressing import generate_multicast_ip
+from .monitor import ChannelMonitor

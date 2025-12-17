@@ -157,6 +157,25 @@ control = RadiodControl("radiod.local", interface=my_interface)
 channels = discover_channels("radiod.local", interface=my_interface)
 ```
 
+### Automatic Channel Recovery
+
+ensure your channels survive radiod restarts:
+
+```python
+from ka9q import RadiodControl, ChannelMonitor
+
+control = RadiodControl("radiod.local")
+monitor = ChannelMonitor(control)
+monitor.start()
+
+# This channel will be automatically re-created if it disappears
+monitor.monitor_channel(
+    frequency_hz=14.074e6,
+    preset="usb",
+    sample_rate=12000
+)
+```
+
 ## Documentation
 
 For detailed information, please refer to the documentation in the `docs/` directory:
