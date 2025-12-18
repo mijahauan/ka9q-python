@@ -5,21 +5,43 @@ A general-purpose library for controlling ka9q-radio channels and streams.
 No assumptions about your application - works for everything from AM radio
 listening to SuperDARN radar monitoring.
 
-Recommended usage (high-level API):
+Recommended usage (self-healing stream):
+    from ka9q import RadiodControl, ManagedStream
+    
+    def on_samples(samples, quality):
+        process(samples)
+    
+    def on_dropped(reason):
+        print(f"Stream dropped: {reason}")
+    
+    def on_restored(channel):
+        print(f"Stream restored: {channel.frequency/1e6:.3f} MHz")
+    
+    with RadiodControl("radiod.local") as control:
+        # ManagedStream auto-heals through radiod restarts
+        stream = ManagedStream(
+            control=control,
+            frequency_hz=14.074e6,
+            preset="usb",
+            sample_rate=12000,
+            on_samples=on_samples,
+            on_stream_dropped=on_dropped,
+            on_stream_restored=on_restored,
+        )
+        stream.start()
+        # ... stream continues through disruptions ...
+        stream.stop()
+
+Manual channel management:
     from ka9q import RadiodControl, RadiodStream
     
     with RadiodControl("radiod.local") as control:
-        # Request a channel with specific characteristics
-        # ka9q-python handles discovery, creation, and verification
+        # ensure_channel() verifies the channel before returning
         channel = control.ensure_channel(
             frequency_hz=14.074e6,
             preset="usb",
             sample_rate=12000
         )
-        # Channel is verified and ready for streaming
-        print(f"Channel ready: {channel.frequency/1e6:.3f} MHz")
-        
-        # Start receiving samples
         stream = RadiodStream(channel, on_samples=my_callback)
         stream.start()
 
@@ -27,16 +49,12 @@ Lower-level usage (explicit control):
     from ka9q import RadiodControl, allocate_ssrc
     
     with RadiodControl("radiod.local") as control:
-        # SSRC-free API - SSRC auto-allocated
         ssrc = control.create_channel(
             frequency_hz=10.0e6,
             preset="am",
             sample_rate=12000
         )
         print(f"Created channel with SSRC: {ssrc}")
-        
-        # Or use allocate_ssrc() directly for coordination
-        ssrc = allocate_ssrc(10.0e6, "iq", 16000)
 """
 __version__ = '3.2.7'
 __author__ = 'Michael Hauan AC0G'
@@ -72,6 +90,11 @@ from .resequencer import (
 from .stream import (
     RadiodStream,
 )
+from .managed_stream import (
+    ManagedStream,
+    ManagedStreamStats,
+    StreamState,
+)
 
 __all__ = [
     # Control
@@ -103,7 +126,7 @@ __all__ = [
     'parse_rtp_header',
     'rtp_to_wallclock',
     
-    # Stream API (sample-oriented) - NEW
+    # Stream API (sample-oriented)
     'RadiodStream',
     'StreamQuality',
     'GapSource',
@@ -111,6 +134,13 @@ __all__ = [
     'PacketResequencer',
     'RTPPacket',
     'ResequencerStats',
+    
+    # Managed Stream (self-healing)
+    'ManagedStream',
+    'ManagedStreamStats',
+    'StreamState',
+    
+    # Utilities
     'generate_multicast_ip',
     'ChannelMonitor',
 ]
