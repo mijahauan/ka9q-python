@@ -163,11 +163,12 @@ def test_encoding_constants():
     print("Testing encoding constants...")
     
     assert Encoding.NO_ENCODING == 0
-    assert Encoding.S16BE == 1
-    assert Encoding.S16LE == 2
-    assert Encoding.F32 == 3
-    assert Encoding.F16 == 4
-    assert Encoding.OPUS == 5
+    assert Encoding.S16LE == 1
+    assert Encoding.S16BE == 2
+    assert Encoding.OPUS == 3
+    assert Encoding.F32 == 4
+    assert Encoding.AX25 == 5
+    assert Encoding.F16 == 6
     
     print("  ✓ All encoding constants correct!\n")
 

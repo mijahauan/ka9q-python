@@ -75,31 +75,31 @@ class TestEncodingFromString:
         """Test parsing S16BE encoding"""
         result = encoding_from_string("S16BE")
         assert result == Encoding.S16BE
-        assert result == 1
+        assert result == 2
     
     def test_parse_s16le(self):
         """Test parsing S16LE encoding"""
         result = encoding_from_string("S16LE")
         assert result == Encoding.S16LE
-        assert result == 2
+        assert result == 1
     
     def test_parse_f32(self):
         """Test parsing F32 encoding"""
         result = encoding_from_string("F32")
         assert result == Encoding.F32
-        assert result == 3
+        assert result == 4
     
     def test_parse_f16(self):
         """Test parsing F16 encoding"""
         result = encoding_from_string("F16")
         assert result == Encoding.F16
-        assert result == 4
+        assert result == 6
     
     def test_parse_opus(self):
         """Test parsing OPUS encoding"""
         result = encoding_from_string("OPUS")
         assert result == Encoding.OPUS
-        assert result == 5
+        assert result == 3
     
     def test_parse_lowercase(self):
         """Test that lowercase encoding names work"""
@@ -220,19 +220,21 @@ class TestCLIOutputFormatting:
         """Test encoding name mapping"""
         enc_names = {
             0: 'None', 
-            1: 'S16BE', 
-            2: 'S16LE', 
-            3: 'F32', 
-            4: 'F16', 
-            5: 'OPUS'
+            1: 'S16LE', 
+            2: 'S16BE', 
+            3: 'OPUS', 
+            4: 'F32', 
+            5: 'AX25',
+            6: 'F16'
         }
         
         assert enc_names[Encoding.NO_ENCODING] == 'None'
-        assert enc_names[Encoding.S16BE] == 'S16BE'
         assert enc_names[Encoding.S16LE] == 'S16LE'
-        assert enc_names[Encoding.F32] == 'F32'
-        assert enc_names[Encoding.F16] == 'F16'
+        assert enc_names[Encoding.S16BE] == 'S16BE'
         assert enc_names[Encoding.OPUS] == 'OPUS'
+        assert enc_names[Encoding.F32] == 'F32'
+        assert enc_names[Encoding.AX25] == 'AX25'
+        assert enc_names[Encoding.F16] == 'F16'
 
 
 class TestFrequencyParsingSuite:

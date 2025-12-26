@@ -37,10 +37,6 @@ from .utils import resolve_multicast_address
 logger = logging.getLogger(__name__)
 
 
-# Command packet type
-CMD = 1
-
-
 @dataclass
 class Metrics:
     """Metrics for monitoring RadiodControl operations"""

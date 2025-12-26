@@ -47,13 +47,15 @@ pip install -e .
 
 ## Quick Start
 
+> **Host selection:** All examples reference `bee1-hf-status.local`, which is the default integration test radiod in this repo. Replace it with your own radiod host or set `RADIOD_HOST`, `RADIOD_ADDRESS`, or the `--radiod-host` pytest option when running in other environments.
+
 ### Listen to AM Broadcast
 
 ```python
 from ka9q import RadiodControl
 
-# Connect to radiod
-control = RadiodControl("radiod.local")
+# Connect to radiod (default test host: bee1-hf-status.local)
+control = RadiodControl("bee1-hf-status.local")
 
 # Create AM channel on 10 MHz WWV
 control.create_channel(
@@ -70,7 +72,7 @@ control.create_channel(
 ```python
 from ka9q import RadiodControl, Encoding
 
-control = RadiodControl("radiod.local")
+control = RadiodControl("bee1-hf-status.local")
 
 # Create a channel with 32-bit float output (highest quality)
 control.ensure_channel(
@@ -87,7 +89,7 @@ control.ensure_channel(
 ```python
 from ka9q import RadiodControl
 
-control = RadiodControl("radiod.local")
+control = RadiodControl("bee1-hf-status.local")
 
 wspr_bands = [
     (1.8366e6, "160m"),
@@ -112,7 +114,7 @@ for freq, band in wspr_bands:
 ```python
 from ka9q import discover_channels
 
-channels = discover_channels("radiod.local")
+channels = discover_channels("bee1-hf-status.local")
 for ssrc, info in channels.items():
     print(f"{ssrc}: {info.frequency/1e6:.3f} MHz, {info.preset}, {info.sample_rate} Hz")
 ```
@@ -124,7 +126,7 @@ from ka9q import discover_channels, RTPRecorder
 import time
 
 # Get channel with timing info
-channels = discover_channels("radiod.local")
+channels = discover_channels("bee1-hf-status.local")
 channel = channels[14074000]
 
 # Define packet handler
@@ -151,10 +153,10 @@ from ka9q import RadiodControl, discover_channels
 my_interface = "192.168.1.100"
 
 # Create control with specific interface
-control = RadiodControl("radiod.local", interface=my_interface)
+control = RadiodControl("bee1-hf-status.local", interface=my_interface)
 
 # Discovery on specific interface
-channels = discover_channels("radiod.local", interface=my_interface)
+channels = discover_channels("bee1-hf-status.local", interface=my_interface)
 ```
 
 ### Automatic Channel Recovery
@@ -164,7 +166,7 @@ ensure your channels survive radiod restarts:
 ```python
 from ka9q import RadiodControl, ChannelMonitor
 
-control = RadiodControl("radiod.local")
+control = RadiodControl("bee1-hf-status.local")
 monitor = ChannelMonitor(control)
 monitor.start()
 
@@ -174,7 +176,25 @@ monitor.monitor_channel(
     preset="usb",
     sample_rate=12000
 )
+
+### Channel Cleanup (frequency = 0)
+
+`radiod` removes channels by polling for streams whose frequency is set to `0 Hz`. Always call `remove_channel(ssrc)` (or explicitly set `set_frequency(ssrc, 0.0)` if you build TLVs yourself) when tearing down a stream so the background poller can reclaim it:
+
+```python
+with RadiodControl("bee1-hf-status.local") as control:
+    info = control.ensure_channel(
+        frequency_hz=10e6,
+        preset="iq",
+        sample_rate=16000
+    )
+
+    # ... use channel ...
+
+    control.remove_channel(info.ssrc)  # marks frequency=0
 ```
+
+> Note: `remove_channel()` finishes instantly on the client; radiod’s poller typically purges the channel within the next second.
 
 ## Documentation
 

@@ -5,6 +5,26 @@ All notable changes to ka9q-python will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.3.0] - 2025-12-25
+
+### Added
+- **Deterministic destination guidance**: README now documents bee1-hf-status.local default host, deterministic multicast/IP behavior, and mandatory cleanup (frequency = 0).
+- **Host configuration note**: Examples explicitly state that `bee1-hf-status.local` is the repo’s integration target and should be replaced with the user’s own radiod host (or overridden via env vars / pytest flags).
+- **Channel cleanup verification**: `tests/test_channel_verification.py` now confirms `remove_channel()` actually marks streams for deletion.
+- **Integration-test guardrails**: Channel verification tests require an explicit opt-in environment variable before touching live radiod instances.
+
+### Changed
+- **Encoding constants**: All tests updated to match `ka9q.types.Encoding` ordering (`NO_ENCODING`, `S16LE`, `S16BE`, `OPUS`, `F32`, `AX25`, `F16`).
+- **README Quick Start**: All examples reference `bee1-hf-status.local`, matching current lab deployments.
+- **Duplicate constants**: `CMD` now defined solely in `ka9q.types` to avoid divergence.
+
+### Fixed
+- **Version metadata**: `pyproject.toml`, `setup.py`, and `ka9q/__init__.py` now all report `3.3.0`.
+- **Release documentation drift**: Release notes expanded beyond a single bullet so users can trace changes post-2.3.0.
+- **Zombie utilities**: Standalone debug scripts moved under `examples/diagnostics/` to avoid confusion with supported APIs.
+
+---
+
 ## [2.3.0] - 2025-11-21
 
 ### Added - Multi-Homed System Support 🎉

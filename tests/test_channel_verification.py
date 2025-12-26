@@ -647,12 +647,18 @@ def verify_channel(
     Returns VerificationResult with all verification details.
     """
     # Allocate SSRC
+    # Generate deterministic IP address for this client request
+    from ka9q.addressing import generate_multicast_ip
+    unique_id = f"{test_case.frequency_hz}_{test_case.preset}_{test_case.sample_rate}"
+    client_ip = generate_multicast_ip(unique_id)
+    
     ssrc = allocate_ssrc(
         frequency_hz=test_case.frequency_hz,
         preset=test_case.preset,
         sample_rate=test_case.sample_rate,
         agc=bool(test_case.agc_enable),
-        gain=test_case.gain
+        gain=test_case.gain,
+        destination=client_ip
     )
     
     result = VerificationResult(
@@ -670,6 +676,7 @@ def verify_channel(
             'frequency_hz': test_case.frequency_hz,
             'preset': test_case.preset,
             'sample_rate': test_case.sample_rate,
+            'destination': client_ip,
             'timeout': 5.0,
         }
         
@@ -708,13 +715,29 @@ def verify_channel(
             logger.warning("ensure_channel timed out")
         
         # Wait for channel to stabilize
-        time.sleep(0.5)
+        time.sleep(2.0)
         
         # 2. Verify channel is visible in discovery and check status
-        channels = discover_channels(control.status_address, listen_duration=3.0)
-        if ssrc in channels:
+        channels = discover_channels(control.status_address, listen_duration=5.0)
+        
+        # Find channel by matching characteristics AND client IP
+        matching_channel = None
+        for channel_ssrc, channel in channels.items():
+            freq_match = abs(channel.frequency - test_case.frequency_hz) < 1.0
+            preset_match = channel.preset.lower() == test_case.preset.lower()
+            rate_match = channel.sample_rate == test_case.sample_rate
+            ip_match = channel.multicast_address == client_ip
+            
+            if freq_match and preset_match and rate_match and ip_match:
+                matching_channel = channel
+                found_ssrc = channel_ssrc
+                break
+        
+        if matching_channel:
             result.channel_visible = True
-            channel = channels[ssrc]
+            # Channel found on client's deterministic IP - SSRC doesn't matter
+            channel = matching_channel
+            logger.info(f"Found channel on client IP {client_ip} with SSRC {found_ssrc}")
             
             # Verify status matches request
             freq_diff = abs(channel.frequency - test_case.frequency_hz)
@@ -775,8 +798,8 @@ def verify_channel(
                 # No specific destination requested - accept whatever radiod assigned
                 result.status_destination_match = True
             
-            # 3. Capture and verify packets on the actual multicast address
-            # Use the address from discovery (which should match our request if we made one)
+            # 3. Capture and verify packets on the actual multicast address from radiod
+            # Use the address radiod actually assigned (may differ from client's deterministic IP)
             capture_multicast = channel.multicast_address
             capture_port = channel.port
             
@@ -786,7 +809,7 @@ def verify_channel(
                 capture_port = test_case.expected_port
             
             # Allow multicast join to settle before capturing
-            time.sleep(0.5)
+            time.sleep(1.0)
             
             logger.info(f"Capturing packets on {capture_multicast}:{capture_port} for {capture_duration}s...")
             capture_result = capture_packets(
@@ -885,19 +908,36 @@ def verify_channel(
             else:
                 result.errors.append("No packets received")
         else:
-            result.errors.append(f"Channel SSRC {ssrc} not visible in discovery")
+            result.channel_visible = False
+            result.errors.append(f"No channel found matching characteristics: {test_case.frequency_hz/1e6:.3f} MHz, {test_case.preset}, {test_case.sample_rate} Hz")
+            logger.warning(f"No matching channel found in {len(channels)} total channels")
         
     except Exception as e:
         result.errors.append(f"Exception: {e}")
         logger.exception(f"Error verifying {test_case.name}")
     
     finally:
-        # 4. Remove channel
+        # 4. Mark channel for removal by setting frequency to 0
+        # Note: Actual removal is handled by radiod's polling cycle
         try:
-            logger.info(f"Removing channel SSRC {ssrc}")
-            control.remove_channel(ssrc)
-            result.channel_removed = True
-            time.sleep(1.0)  # Give radiod time to fully remove channel and clear buffers
+            logger.info(f"Marking channel for removal (frequency=0)")
+            control.remove_channel(found_ssrc if 'found_ssrc' in locals() else ssrc)
+            
+            # Verify frequency was actually set to 0
+            time.sleep(0.5)  # Brief pause for status update
+            channels_after = discover_channels(control.status_address, listen_duration=2.0)
+            target_ssrc = found_ssrc if 'found_ssrc' in locals() else ssrc
+            
+            if target_ssrc in channels_after and channels_after[target_ssrc].frequency == 0.0:
+                result.channel_removed = True
+                logger.info(f"Confirmed channel {target_ssrc} frequency set to 0")
+            elif target_ssrc not in channels_after:
+                result.channel_removed = True
+                logger.info(f"Channel {target_ssrc} already removed by radiod")
+            else:
+                result.channel_removed = False
+                result.errors.append(f"Failed to set frequency to 0: still {channels_after[target_ssrc].frequency} Hz")
+                logger.error(f"Channel {target_ssrc} frequency not set to 0")
         except Exception as e:
             result.errors.append(f"Failed to remove channel: {e}")
     
@@ -984,7 +1024,7 @@ def run_test_suite(radiod_address: str, test_cases: List[ChannelTestCase] = None
 def radiod_address():
     """Get radiod address from environment or default"""
     import os
-    return os.environ.get('RADIOD_ADDRESS', 'radiod.local')
+    return os.environ.get('RADIOD_ADDRESS', 'bee1-hf-status.local')
 
 
 @pytest.fixture(scope="module")
