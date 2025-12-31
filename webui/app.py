@@ -229,6 +229,285 @@ def tune_channel(radiod_address, ssrc):
         }), 500
 
 
+@app.route('/api/agc/<radiod_address>/<int:ssrc>', methods=['POST'])
+def set_agc(radiod_address, ssrc):
+    """Set AGC parameters for a channel"""
+    try:
+        data = request.json
+        
+        key = f"{radiod_address}:{ssrc}"
+        if key not in active_controls:
+            active_controls[key] = RadiodControl(radiod_address)
+        
+        control = active_controls[key]
+        
+        # Build AGC parameters
+        enable = data.get('enable', True)
+        hangtime = data.get('hangtime')
+        headroom = data.get('headroom')
+        recovery_rate = data.get('recovery_rate')
+        attack_rate = data.get('attack_rate')
+        
+        control.set_agc(ssrc, enable, hangtime, headroom, recovery_rate, attack_rate)
+        
+        return jsonify({
+            'success': True,
+            'message': 'AGC configured successfully'
+        })
+    except Exception as e:
+        logger.error(f"Error setting AGC: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@app.route('/api/shift/<radiod_address>/<int:ssrc>', methods=['POST'])
+def set_shift(radiod_address, ssrc):
+    """Set frequency shift for a channel"""
+    try:
+        data = request.json
+        shift_hz = float(data.get('shift_hz', 0))
+        
+        key = f"{radiod_address}:{ssrc}"
+        if key not in active_controls:
+            active_controls[key] = RadiodControl(radiod_address)
+        
+        control = active_controls[key]
+        control.set_shift_frequency(ssrc, shift_hz)
+        
+        return jsonify({
+            'success': True,
+            'message': f'Shift frequency set to {shift_hz} Hz'
+        })
+    except Exception as e:
+        logger.error(f"Error setting shift: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@app.route('/api/output_level/<radiod_address>/<int:ssrc>', methods=['POST'])
+def set_output_level(radiod_address, ssrc):
+    """Set output level for a channel"""
+    try:
+        data = request.json
+        level = float(data.get('level', 0))
+        
+        key = f"{radiod_address}:{ssrc}"
+        if key not in active_controls:
+            active_controls[key] = RadiodControl(radiod_address)
+        
+        control = active_controls[key]
+        control.set_output_level(ssrc, level)
+        
+        return jsonify({
+            'success': True,
+            'message': f'Output level set to {level}'
+        })
+    except Exception as e:
+        logger.error(f"Error setting output level: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@app.route('/api/filter/<radiod_address>/<int:ssrc>', methods=['POST'])
+def set_filter(radiod_address, ssrc):
+    """Set filter parameters for a channel"""
+    try:
+        data = request.json
+        
+        key = f"{radiod_address}:{ssrc}"
+        if key not in active_controls:
+            active_controls[key] = RadiodControl(radiod_address)
+        
+        control = active_controls[key]
+        
+        low_edge = data.get('low_edge')
+        high_edge = data.get('high_edge')
+        kaiser_beta = data.get('kaiser_beta')
+        
+        control.set_filter(ssrc, low_edge, high_edge, kaiser_beta)
+        
+        return jsonify({
+            'success': True,
+            'message': 'Filter parameters set successfully'
+        })
+    except Exception as e:
+        logger.error(f"Error setting filter: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@app.route('/api/squelch/<radiod_address>/<int:ssrc>', methods=['POST'])
+def set_squelch(radiod_address, ssrc):
+    """Set squelch parameters for a channel"""
+    try:
+        data = request.json
+        
+        key = f"{radiod_address}:{ssrc}"
+        if key not in active_controls:
+            active_controls[key] = RadiodControl(radiod_address)
+        
+        control = active_controls[key]
+        
+        open_threshold = data.get('open_threshold')
+        close_threshold = data.get('close_threshold')
+        snr_squelch = data.get('snr_squelch')
+        
+        control.set_squelch(ssrc, open_threshold, close_threshold, snr_squelch)
+        
+        return jsonify({
+            'success': True,
+            'message': 'Squelch configured successfully'
+        })
+    except Exception as e:
+        logger.error(f"Error setting squelch: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@app.route('/api/pll/<radiod_address>/<int:ssrc>', methods=['POST'])
+def set_pll(radiod_address, ssrc):
+    """Set PLL parameters for a channel"""
+    try:
+        data = request.json
+        
+        key = f"{radiod_address}:{ssrc}"
+        if key not in active_controls:
+            active_controls[key] = RadiodControl(radiod_address)
+        
+        control = active_controls[key]
+        
+        enable = data.get('enable')
+        bandwidth = data.get('bandwidth')
+        square = data.get('square')
+        
+        control.set_pll(ssrc, enable, bandwidth, square)
+        
+        return jsonify({
+            'success': True,
+            'message': 'PLL configured successfully'
+        })
+    except Exception as e:
+        logger.error(f"Error setting PLL: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@app.route('/api/output_channels/<radiod_address>/<int:ssrc>', methods=['POST'])
+def set_output_channels(radiod_address, ssrc):
+    """Set output channels (mono/stereo) for a channel"""
+    try:
+        data = request.json
+        channels = int(data.get('channels', 1))
+        
+        key = f"{radiod_address}:{ssrc}"
+        if key not in active_controls:
+            active_controls[key] = RadiodControl(radiod_address)
+        
+        control = active_controls[key]
+        control.set_output_channels(ssrc, channels)
+        
+        return jsonify({
+            'success': True,
+            'message': f'Output channels set to {channels}'
+        })
+    except Exception as e:
+        logger.error(f"Error setting output channels: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@app.route('/api/isb/<radiod_address>/<int:ssrc>', methods=['POST'])
+def set_isb(radiod_address, ssrc):
+    """Set independent sideband mode for a channel"""
+    try:
+        data = request.json
+        enable = bool(data.get('enable', False))
+        
+        key = f"{radiod_address}:{ssrc}"
+        if key not in active_controls:
+            active_controls[key] = RadiodControl(radiod_address)
+        
+        control = active_controls[key]
+        control.set_independent_sideband(ssrc, enable)
+        
+        return jsonify({
+            'success': True,
+            'message': f'ISB {"enabled" if enable else "disabled"}'
+        })
+    except Exception as e:
+        logger.error(f"Error setting ISB: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@app.route('/api/envelope/<radiod_address>/<int:ssrc>', methods=['POST'])
+def set_envelope(radiod_address, ssrc):
+    """Set envelope detection for a channel"""
+    try:
+        data = request.json
+        enable = bool(data.get('enable', False))
+        
+        key = f"{radiod_address}:{ssrc}"
+        if key not in active_controls:
+            active_controls[key] = RadiodControl(radiod_address)
+        
+        control = active_controls[key]
+        control.set_envelope_detection(ssrc, enable)
+        
+        return jsonify({
+            'success': True,
+            'message': f'Envelope detection {"enabled" if enable else "disabled"}'
+        })
+    except Exception as e:
+        logger.error(f"Error setting envelope detection: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@app.route('/api/opus_bitrate/<radiod_address>/<int:ssrc>', methods=['POST'])
+def set_opus_bitrate(radiod_address, ssrc):
+    """Set Opus codec bitrate for a channel"""
+    try:
+        data = request.json
+        bitrate = int(data.get('bitrate', 32000))
+        
+        key = f"{radiod_address}:{ssrc}"
+        if key not in active_controls:
+            active_controls[key] = RadiodControl(radiod_address)
+        
+        control = active_controls[key]
+        control.set_opus_bitrate(ssrc, bitrate)
+        
+        return jsonify({
+            'success': True,
+            'message': f'Opus bitrate set to {bitrate} bps'
+        })
+    except Exception as e:
+        logger.error(f"Error setting Opus bitrate: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
 def format_destination(dest):
     """Format destination dictionary for display"""
     if not dest:

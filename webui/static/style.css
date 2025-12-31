@@ -208,6 +208,26 @@ main {
     background: #c0392b;
 }
 
+/* Header Controls */
+.header-controls {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.edit-mode-btn {
+    background: #3498db;
+    color: white;
+}
+
+.edit-mode-btn:hover {
+    background: #2980b9;
+}
+
+.edit-mode-btn.active {
+    background: #f39c12;
+    color: #16213e;
+}
+
 /* Sections Grid - 4 columns across */
 .sections-grid {
     display: grid;
@@ -265,6 +285,72 @@ main {
     color: #eee;
     font-weight: 600;
     font-family: 'Courier New', monospace;
+}
+
+/* Edit Controls */
+.edit-control {
+    padding: 0.4rem 0.6rem;
+    background: #0f3460;
+    color: #eee;
+    border: 1px solid #4ecca3;
+    border-radius: 4px;
+    font-size: 0.9rem;
+    font-family: 'Courier New', monospace;
+    width: 100%;
+    max-width: 200px;
+}
+
+.edit-control:focus {
+    outline: none;
+    border-color: #4ecca3;
+    box-shadow: 0 0 0 2px rgba(78, 204, 163, 0.2);
+}
+
+input[type="number"].edit-control {
+    text-align: right;
+}
+
+input[type="checkbox"].edit-control {
+    width: auto;
+    margin-right: 0.5rem;
+    cursor: pointer;
+}
+
+select.edit-control {
+    cursor: pointer;
+    min-width: 120px;
+}
+
+/* Control Buttons */
+.control-buttons {
+    display: flex;
+    gap: 1rem;
+    justify-content: center;
+    padding: 1.5rem;
+    margin-top: 1rem;
+    border-top: 2px solid #0f3460;
+}
+
+.btn-primary {
+    background: #27ae60;
+    color: white;
+    padding: 0.75rem 2rem;
+    font-size: 1rem;
+}
+
+.btn-primary:hover {
+    background: #229954;
+}
+
+.btn-secondary {
+    background: #95a5a6;
+    color: white;
+    padding: 0.75rem 2rem;
+    font-size: 1rem;
+}
+
+.btn-secondary:hover {
+    background: #7f8c8d;
 }
 
 .info-item.highlight {

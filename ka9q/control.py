@@ -1512,6 +1512,138 @@ class RadiodControl:
         logger.info(f"Removing channel SSRC {ssrc}")
         self.send_command(cmdbuffer)
     
+    def set_squelch(self, ssrc: int, open_threshold: Optional[float] = None, 
+                    close_threshold: Optional[float] = None, snr_squelch: Optional[bool] = None):
+        """
+        Set squelch parameters for a channel
+        
+        Args:
+            ssrc: SSRC of the channel
+            open_threshold: Squelch open threshold in dB (optional)
+            close_threshold: Squelch close threshold in dB (optional)
+            snr_squelch: Enable SNR-based squelch (optional)
+        """
+        cmdbuffer = bytearray()
+        cmdbuffer.append(CMD)
+        
+        if open_threshold is not None:
+            encode_float(cmdbuffer, StatusType.SQUELCH_OPEN, open_threshold)
+        if close_threshold is not None:
+            encode_float(cmdbuffer, StatusType.SQUELCH_CLOSE, close_threshold)
+        if snr_squelch is not None:
+            encode_int(cmdbuffer, StatusType.SNR_SQUELCH, 1 if snr_squelch else 0)
+        
+        encode_int(cmdbuffer, StatusType.OUTPUT_SSRC, ssrc)
+        encode_int(cmdbuffer, StatusType.COMMAND_TAG, secrets.randbits(31))
+        encode_eol(cmdbuffer)
+        
+        logger.info(f"Setting squelch for SSRC {ssrc}")
+        self.send_command(cmdbuffer)
+
+    def set_pll(self, ssrc: int, enable: Optional[bool] = None, 
+                bandwidth: Optional[float] = None, square: Optional[bool] = None):
+        """
+        Set PLL parameters for a channel
+        
+        Args:
+            ssrc: SSRC of the channel
+            enable: Enable/disable PLL (optional)
+            bandwidth: PLL bandwidth in Hz (optional)
+            square: Enable square-wave PLL output (optional)
+        """
+        cmdbuffer = bytearray()
+        cmdbuffer.append(CMD)
+        
+        if enable is not None:
+            encode_int(cmdbuffer, StatusType.PLL_ENABLE, 1 if enable else 0)
+        if bandwidth is not None:
+            encode_float(cmdbuffer, StatusType.PLL_BW, bandwidth)
+        if square is not None:
+            encode_int(cmdbuffer, StatusType.PLL_SQUARE, 1 if square else 0)
+        
+        encode_int(cmdbuffer, StatusType.OUTPUT_SSRC, ssrc)
+        encode_int(cmdbuffer, StatusType.COMMAND_TAG, secrets.randbits(31))
+        encode_eol(cmdbuffer)
+        
+        logger.info(f"Setting PLL for SSRC {ssrc}")
+        self.send_command(cmdbuffer)
+
+    def set_output_channels(self, ssrc: int, channels: int):
+        """
+        Set number of output channels (mono/stereo)
+        
+        Args:
+            ssrc: SSRC of the channel
+            channels: Number of channels (1=mono, 2=stereo)
+        """
+        cmdbuffer = bytearray()
+        cmdbuffer.append(CMD)
+        
+        encode_int(cmdbuffer, StatusType.OUTPUT_CHANNELS, channels)
+        encode_int(cmdbuffer, StatusType.OUTPUT_SSRC, ssrc)
+        encode_int(cmdbuffer, StatusType.COMMAND_TAG, secrets.randbits(31))
+        encode_eol(cmdbuffer)
+        
+        logger.info(f"Setting output channels for SSRC {ssrc} to {channels}")
+        self.send_command(cmdbuffer)
+
+    def set_independent_sideband(self, ssrc: int, enable: bool):
+        """
+        Enable/disable independent sideband (ISB) mode
+        
+        Args:
+            ssrc: SSRC of the channel
+            enable: Enable ISB mode
+        """
+        cmdbuffer = bytearray()
+        cmdbuffer.append(CMD)
+        
+        encode_int(cmdbuffer, StatusType.INDEPENDENT_SIDEBAND, 1 if enable else 0)
+        encode_int(cmdbuffer, StatusType.OUTPUT_SSRC, ssrc)
+        encode_int(cmdbuffer, StatusType.COMMAND_TAG, secrets.randbits(31))
+        encode_eol(cmdbuffer)
+        
+        logger.info(f"Setting ISB for SSRC {ssrc} to {enable}")
+        self.send_command(cmdbuffer)
+
+    def set_envelope_detection(self, ssrc: int, enable: bool):
+        """
+        Enable/disable envelope detection for AM
+        
+        Args:
+            ssrc: SSRC of the channel
+            enable: Enable envelope detection
+        """
+        cmdbuffer = bytearray()
+        cmdbuffer.append(CMD)
+        
+        encode_int(cmdbuffer, StatusType.ENVELOPE, 1 if enable else 0)
+        encode_int(cmdbuffer, StatusType.OUTPUT_SSRC, ssrc)
+        encode_int(cmdbuffer, StatusType.COMMAND_TAG, secrets.randbits(31))
+        encode_eol(cmdbuffer)
+        
+        logger.info(f"Setting envelope detection for SSRC {ssrc} to {enable}")
+        self.send_command(cmdbuffer)
+
+    def set_opus_bitrate(self, ssrc: int, bitrate: int):
+        """
+        Set Opus codec bitrate
+        
+        Args:
+            ssrc: SSRC of the channel
+            bitrate: Bitrate in bits per second (6000-510000)
+        """
+        cmdbuffer = bytearray()
+        cmdbuffer.append(CMD)
+        
+        encode_int(cmdbuffer, StatusType.OPUS_BITRATE, bitrate)
+        encode_int(cmdbuffer, StatusType.OUTPUT_SSRC, ssrc)
+        encode_int(cmdbuffer, StatusType.COMMAND_TAG, secrets.randbits(31))
+        encode_eol(cmdbuffer)
+        
+        logger.info(f"Setting Opus bitrate for SSRC {ssrc} to {bitrate}")
+        self.send_command(cmdbuffer)
+    
     def _setup_status_listener(self):
         """Set up socket to listen for status responses"""
         # Create a separate socket for receiving status messages

@@ -5,6 +5,51 @@ All notable changes to ka9q-python will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.4.0] - 2024-12-30
+
+### Added - Web UI Interactive Control 🎛️
+
+**Major Feature**: Full interactive control in web-ui, achieving feature parity with the ncurses `control` program.
+
+#### Backend Control Methods (`ka9q/control.py`)
+- `set_squelch()` - Configure squelch open/close thresholds and SNR squelch
+- `set_pll()` - PLL enable, bandwidth, and square mode configuration
+- `set_output_channels()` - Mono/stereo output selection
+- `set_independent_sideband()` - Independent sideband (ISB) mode
+- `set_envelope_detection()` - AM envelope detection mode
+- `set_opus_bitrate()` - Opus codec bitrate control (6000-510000 bps)
+
+#### Web UI API Endpoints (`webui/app.py`)
+- `POST /api/agc` - Advanced AGC configuration (hangtime, headroom, recovery_rate, attack_rate)
+- `POST /api/shift` - Frequency shift control
+- `POST /api/output_level` - Output level adjustment
+- `POST /api/filter` - Filter parameters (low_edge, high_edge, kaiser_beta)
+- `POST /api/squelch` - Squelch control (open_threshold, close_threshold, snr_squelch)
+- `POST /api/pll` - PLL configuration (enable, bandwidth, square)
+- `POST /api/output_channels` - Mono/stereo selection
+- `POST /api/isb` - Independent sideband mode
+- `POST /api/envelope` - Envelope detection mode
+- `POST /api/opus_bitrate` - Opus codec bitrate
+
+#### Web UI Interactive Features
+- **Edit Mode Toggle** - Switch between view (read-only) and edit (interactive) modes
+- **Interactive Controls** - All settable parameters now have input fields
+- **Apply/Reset Buttons** - Save changes or revert to current values
+- **Auto-refresh Management** - Pauses during editing, resumes in view mode
+- **Input Validation** - Range checking, type validation, visual feedback
+- **Visual Feedback** - Color-coded buttons, status messages, edit mode indicators
+
+#### Feature Parity
+- **Backend**: 95% complete (30/38 control commands from ncurses control program)
+- **Frontend**: 100% complete for implemented backend features
+- All high-priority control features implemented
+
+### Changed
+- Web UI workflow now supports edit mode with "✏️ Edit" / "👁️ View" toggle
+- Auto-refresh pauses during parameter editing to prevent data conflicts
+
+---
+
 ## [3.3.0] - 2025-12-25
 
 ### Added

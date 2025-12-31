@@ -57,7 +57,10 @@
     <template id="channel-detail-template">
         <div class="detail-header">
             <h2>Channel <span class="ssrc-value"></span></h2>
-            <button class="btn btn-small close-btn">✕ Close</button>
+            <div class="header-controls">
+                <button class="btn btn-small edit-mode-btn">✏️ Edit</button>
+                <button class="btn btn-small close-btn">✕ Close</button>
+            </div>
         </div>
         
         <div class="detail-content">
@@ -70,10 +73,19 @@
                         <div class="info-item">
                             <label>Frequency:</label>
                             <span class="value freq-value"></span>
+                            <input type="number" class="edit-control freq-input" step="0.000001" style="display:none;">
                         </div>
                         <div class="info-item">
                             <label>Mode:</label>
                             <span class="value preset-value"></span>
+                            <select class="edit-control preset-input" style="display:none;">
+                                <option value="iq">IQ</option>
+                                <option value="usb">USB</option>
+                                <option value="lsb">LSB</option>
+                                <option value="am">AM</option>
+                                <option value="fm">FM</option>
+                                <option value="cw">CW</option>
+                            </select>
                         </div>
                         <div class="info-item">
                             <label>SSRC:</label>
@@ -89,10 +101,12 @@
                         <div class="info-item">
                             <label>Low Edge:</label>
                             <span class="value low-edge-value"></span>
+                            <input type="number" class="edit-control low-edge-input" step="100" style="display:none;">
                         </div>
                         <div class="info-item">
                             <label>High Edge:</label>
                             <span class="value high-edge-value"></span>
+                            <input type="number" class="edit-control high-edge-input" step="100" style="display:none;">
                         </div>
                         <div class="info-item">
                             <label>Bandwidth:</label>
@@ -101,6 +115,7 @@
                         <div class="info-item">
                             <label title="Kaiser window shaping parameter">Kaiser β:</label>
                             <span class="value kaiser-beta-value"></span>
+                            <input type="number" class="edit-control kaiser-beta-input" step="0.1" min="0" max="20" style="display:none;">
                         </div>
                         <div class="info-item">
                             <label title="FFT block size">FFT Size:</label>
@@ -120,6 +135,18 @@
                         <div class="info-item">
                             <label>Sample Rate:</label>
                             <span class="value samprate-value"></span>
+                            <input type="number" class="edit-control samprate-input" step="1000" style="display:none;">
+                        </div>
+                        <div class="info-item edit-only" style="display:none;">
+                            <label>Channels:</label>
+                            <select class="edit-control channels-input">
+                                <option value="1">Mono</option>
+                                <option value="2">Stereo</option>
+                            </select>
+                        </div>
+                        <div class="info-item edit-only" style="display:none;">
+                            <label>Output Level:</label>
+                            <input type="number" class="edit-control output-level-input" step="0.1" value="0">
                         </div>
                         <div class="info-item">
                             <label>Encoding:</label>
@@ -167,16 +194,31 @@
                             <span class="value demod-type-value"></span>
                         </div>
                         <div class="info-item">
-                            <label>PLL:</label>
+                            <label>PLL Enable:</label>
                             <span class="value pll-status-value"></span>
+                            <input type="checkbox" class="edit-control pll-enable-input" style="display:none;">
                         </div>
                         <div class="info-item">
                             <label title="PLL bandwidth">PLL BW:</label>
                             <span class="value pll-bw-value"></span>
+                            <input type="number" class="edit-control pll-bw-input" step="1" style="display:none;">
+                        </div>
+                        <div class="info-item edit-only" style="display:none;">
+                            <label>PLL Square:</label>
+                            <input type="checkbox" class="edit-control pll-square-input">
                         </div>
                         <div class="info-item">
-                            <label title="Squelch open threshold">Squelch:</label>
+                            <label title="Squelch open threshold">Squelch Open:</label>
                             <span class="value squelch-value"></span>
+                            <input type="number" class="edit-control squelch-open-input" step="0.5" style="display:none;">
+                        </div>
+                        <div class="info-item edit-only" style="display:none;">
+                            <label>Squelch Close:</label>
+                            <input type="number" class="edit-control squelch-close-input" step="0.5">
+                        </div>
+                        <div class="info-item edit-only" style="display:none;">
+                            <label>SNR Squelch:</label>
+                            <input type="checkbox" class="edit-control snr-squelch-input">
                         </div>
                     </div>
                 </div>
@@ -196,6 +238,7 @@
                         <div class="info-item">
                             <label>Shift:</label>
                             <span class="value shift-freq-value"></span>
+                            <input type="number" class="edit-control shift-input" step="100" style="display:none;">
                         </div>
                         <div class="info-item">
                             <label>Doppler:</label>
@@ -254,22 +297,27 @@
                     <div class="info-item">
                         <label>AGC:</label>
                         <span class="value agc-value"></span>
+                        <input type="checkbox" class="edit-control agc-enable-input" style="display:none;">
                     </div>
                     <div class="info-item">
                         <label>Channel Gain:</label>
                         <span class="value gain-value"></span>
+                        <input type="number" class="edit-control gain-input" step="0.5" style="display:none;">
                     </div>
                     <div class="info-item">
                         <label title="AGC headroom">Headroom:</label>
                         <span class="value headroom-value"></span>
+                        <input type="number" class="edit-control headroom-input" step="0.5" style="display:none;">
                     </div>
                     <div class="info-item">
                         <label title="AGC hang time">Hang Time:</label>
                         <span class="value agc-hangtime-value"></span>
+                        <input type="number" class="edit-control hangtime-input" step="0.1" style="display:none;">
                     </div>
                     <div class="info-item">
                         <label title="AGC recovery rate">Recovery:</label>
                         <span class="value agc-recovery-value"></span>
+                        <input type="number" class="edit-control recovery-input" step="0.1" style="display:none;">
                     </div>
                     <div class="info-item">
                         <label>RF Gain:</label>
@@ -286,10 +334,35 @@
                 </div>
             </div>
 
+            <!-- Advanced Controls (Edit Mode Only) -->
+            <div class="section section-full edit-only" style="display:none;">
+                <h3>Advanced Controls</h3>
+                <div class="info-grid">
+                    <div class="info-item">
+                        <label>Independent Sideband:</label>
+                        <input type="checkbox" class="edit-control isb-input">
+                    </div>
+                    <div class="info-item">
+                        <label>Envelope Detection:</label>
+                        <input type="checkbox" class="edit-control envelope-input">
+                    </div>
+                    <div class="info-item">
+                        <label>Opus Bitrate (bps):</label>
+                        <input type="number" class="edit-control opus-bitrate-input" step="1000" value="32000">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Control Buttons (Edit Mode Only) -->
+            <div class="control-buttons edit-only" style="display:none;">
+                <button class="btn btn-primary apply-btn">✓ Apply Changes</button>
+                <button class="btn btn-secondary reset-btn">↺ Reset</button>
+            </div>
+
             <!-- Auto-refresh indicator -->
             <div class="refresh-indicator">
                 <span class="refresh-dot"></span>
-                Auto-refreshing every 1s
+                <span class="refresh-text">Auto-refreshing every 1s</span>
             </div>
         </div>
     </template>
