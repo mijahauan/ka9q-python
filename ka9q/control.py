@@ -1980,6 +1980,10 @@ class RadiodControl:
                 status['encoding'] = decode_int(data, optlen)
             elif type_val == StatusType.OUTPUT_DATA_DEST_SOCKET:
                 status['destination'] = decode_socket(data, optlen)
+            elif type_val == StatusType.OUTPUT_TTL:
+                status['ttl'] = decode_int(data, optlen)
+                if status['ttl'] == 0:
+                    logger.warning(f"Radiod reporting TTL=0 for SSRC {status.get('ssrc', 'unknown')}: Multicast data restricted to localhost loopback only!")
             
             cp += optlen
         

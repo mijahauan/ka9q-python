@@ -161,7 +161,10 @@ def get_channel_status(radiod_address, ssrc):
             'output_data_packets': status.get('output_data_packets'),
             'output_metadata_packets': status.get('output_metadata_packets'),
             'output_errors': status.get('output_errors'),
-            'filter_drops': status.get('filter_drops')
+            'filter_drops': status.get('filter_drops'),
+            
+            # Network
+            'ttl': status.get('ttl')
         }
         
         return jsonify({

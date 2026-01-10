@@ -249,5 +249,23 @@ class TestDecodeSocket:
         assert result['port'] == 1234
 
 
+class TestDecodeTTL:
+    """Tests for decoding OUTPUT_TTL"""
+
+    def test_decode_ttl(self):
+        """Test decoding TTL value"""
+        # TTL is typically a small integer (e.g., 2)
+        data = bytes([2])
+        result = decode_int(data, 1)
+        assert result == 2
+
+    def test_decode_ttl_large(self):
+        """Test decoding larger TTL value"""
+        data = bytes([64])
+        result = decode_int(data, 1)
+        assert result == 64
+
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
