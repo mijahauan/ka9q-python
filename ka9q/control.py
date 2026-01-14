@@ -2285,6 +2285,120 @@ class RadiodControl:
         logger.info(f"Setting Opus bitrate for SSRC {ssrc}: {bitrate} bps")
         self.send_command(cmdbuffer)
     
+    def set_opus_dtx(self, ssrc: int, enable: bool):
+        """
+        Set Opus Discontinuous Transmission (DTX)
+        
+        DTX reduces bandwidth by not transmitting during silence periods.
+        
+        Args:
+            ssrc: SSRC of the channel
+            enable: True to enable DTX, False to disable
+        
+        Example:
+            >>> control.set_opus_dtx(ssrc=12345, enable=True)
+        """
+        _validate_ssrc(ssrc)
+        
+        cmdbuffer = bytearray()
+        cmdbuffer.append(CMD)
+        
+        encode_bool(cmdbuffer, StatusType.OPUS_DTX, enable)
+        encode_int(cmdbuffer, StatusType.OUTPUT_SSRC, ssrc)
+        encode_int(cmdbuffer, StatusType.COMMAND_TAG, secrets.randbits(31))
+        encode_eol(cmdbuffer)
+        
+        logger.info(f"Setting Opus DTX for SSRC {ssrc}: {enable}")
+        self.send_command(cmdbuffer)
+    
+    def set_opus_application(self, ssrc: int, application: int):
+        """
+        Set Opus encoder application type
+        
+        Args:
+            ssrc: SSRC of the channel
+            application: Application type
+                2048 = VOIP (voice, optimized for speech)
+                2049 = AUDIO (music/general audio)
+                2051 = RESTRICTED_LOWDELAY (lowest latency)
+        
+        Example:
+            >>> control.set_opus_application(ssrc=12345, application=2048)  # VOIP
+        """
+        _validate_ssrc(ssrc)
+        if application not in [2048, 2049, 2051]:
+            raise ValidationError(f"Invalid Opus application type: {application}")
+        
+        cmdbuffer = bytearray()
+        cmdbuffer.append(CMD)
+        
+        encode_int(cmdbuffer, StatusType.OPUS_APPLICATION, application)
+        encode_int(cmdbuffer, StatusType.OUTPUT_SSRC, ssrc)
+        encode_int(cmdbuffer, StatusType.COMMAND_TAG, secrets.randbits(31))
+        encode_eol(cmdbuffer)
+        
+        logger.info(f"Setting Opus application for SSRC {ssrc}: {application}")
+        self.send_command(cmdbuffer)
+    
+    def set_opus_bandwidth(self, ssrc: int, bandwidth: int):
+        """
+        Set Opus encoder audio bandwidth limitation
+        
+        Args:
+            ssrc: SSRC of the channel
+            bandwidth: Bandwidth limit in Hz
+                1101 = NARROWBAND (4 kHz)
+                1102 = MEDIUMBAND (6 kHz)
+                1103 = WIDEBAND (8 kHz)
+                1104 = SUPERWIDEBAND (12 kHz)
+                1105 = FULLBAND (20 kHz)
+        
+        Example:
+            >>> control.set_opus_bandwidth(ssrc=12345, bandwidth=1103)  # Wideband
+        """
+        _validate_ssrc(ssrc)
+        if bandwidth not in [1101, 1102, 1103, 1104, 1105]:
+            raise ValidationError(f"Invalid Opus bandwidth: {bandwidth}")
+        
+        cmdbuffer = bytearray()
+        cmdbuffer.append(CMD)
+        
+        encode_int(cmdbuffer, StatusType.OPUS_BANDWIDTH, bandwidth)
+        encode_int(cmdbuffer, StatusType.OUTPUT_SSRC, ssrc)
+        encode_int(cmdbuffer, StatusType.COMMAND_TAG, secrets.randbits(31))
+        encode_eol(cmdbuffer)
+        
+        logger.info(f"Setting Opus bandwidth for SSRC {ssrc}: {bandwidth}")
+        self.send_command(cmdbuffer)
+    
+    def set_opus_fec(self, ssrc: int, loss_percent: int):
+        """
+        Set Opus Forward Error Correction (FEC) expected packet loss rate
+        
+        FEC adds redundancy to protect against packet loss.
+        
+        Args:
+            ssrc: SSRC of the channel
+            loss_percent: Expected packet loss percentage (0-100)
+        
+        Example:
+            >>> control.set_opus_fec(ssrc=12345, loss_percent=5)  # 5% expected loss
+        """
+        _validate_ssrc(ssrc)
+        if not (0 <= loss_percent <= 100):
+            raise ValidationError(f"Loss percent must be 0-100, got {loss_percent}")
+        
+        cmdbuffer = bytearray()
+        cmdbuffer.append(CMD)
+        
+        encode_int(cmdbuffer, StatusType.OPUS_FEC, loss_percent)
+        encode_int(cmdbuffer, StatusType.OUTPUT_SSRC, ssrc)
+        encode_int(cmdbuffer, StatusType.COMMAND_TAG, secrets.randbits(31))
+        encode_eol(cmdbuffer)
+        
+        logger.info(f"Setting Opus FEC for SSRC {ssrc}: {loss_percent}% expected loss")
+        self.send_command(cmdbuffer)
+    
     def set_packet_buffering(self, ssrc: int, min_blocks: int):
         """
         Set minimum packet buffering (0-4 blocks)
@@ -2372,7 +2486,7 @@ class RadiodControl:
         
         if bin_bw_hz is not None:
             _validate_positive(bin_bw_hz, "Bin bandwidth")
-            encode_float(cmdbuffer, StatusType.NONCOHERENT_BIN_BW, bin_bw_hz)
+            encode_float(cmdbuffer, StatusType.RESOLUTION_BW, bin_bw_hz)
         if bin_count is not None:
             if bin_count <= 0:
                 raise ValidationError(f"bin_count must be positive, got {bin_count}")
@@ -2381,7 +2495,7 @@ class RadiodControl:
             _validate_positive(crossover_hz, "Crossover frequency")
             encode_float(cmdbuffer, StatusType.CROSSOVER, crossover_hz)
         if kaiser_beta is not None:
-            encode_float(cmdbuffer, StatusType.SPECTRUM_KAISER_BETA, kaiser_beta)
+            encode_float(cmdbuffer, StatusType.SPECTRUM_SHAPE, kaiser_beta)
         
         encode_int(cmdbuffer, StatusType.OUTPUT_SSRC, ssrc)
         encode_int(cmdbuffer, StatusType.COMMAND_TAG, secrets.randbits(31))

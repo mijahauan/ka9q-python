@@ -19,13 +19,13 @@ class StatusType:
     SETOPTS = 6
     CLEAROPTS = 7
     RTP_TIMESNAP = 8
-    UNUSED4 = 9
+    BIN_BYTE_DATA = 9
     INPUT_SAMPRATE = 10
-    UNUSED6 = 11
-    UNUSED7 = 12
+    SPECTRUM_BASE = 11
+    SPECTRUM_AVG = 12
     INPUT_SAMPLES = 13
-    UNUSED8 = 14
-    UNUSED9 = 15
+    WINDOW_TYPE = 14
+    NOISE_BW = 15
     
     OUTPUT_DATA_SOURCE_SOCKET = 16
     OUTPUT_DATA_DEST_SOCKET = 17
@@ -124,9 +124,9 @@ class StatusType:
     THRESH_EXTEND = 90
     
     # Spectral analysis
-    SPECTRUM_KAISER_BETA = 91
+    SPECTRUM_SHAPE = 91
     COHERENT_BIN_SPACING = 92
-    NONCOHERENT_BIN_BW = 93
+    RESOLUTION_BW = 93
     BIN_COUNT = 94
     CROSSOVER = 95
     BIN_DATA = 96
@@ -145,6 +145,11 @@ class StatusType:
     SAMPLES_SINCE_OVER = 108
     PLL_WRAPS = 109
     RF_LEVEL_CAL = 110
+    OPUS_DTX = 111
+    OPUS_APPLICATION = 112
+    OPUS_BANDWIDTH = 113
+    OPUS_FEC = 114
+    SPECTRUM_STEP = 115
 
 
 # Command packet type
@@ -157,6 +162,14 @@ class Encoding:
     S16LE = 1  # Signed 16-bit little-endian
     S16BE = 2  # Signed 16-bit big-endian
     OPUS = 3   # Opus codec
-    F32 = 4    # 32-bit float (F32LE in C)
+    F32LE = 4  # 32-bit float little-endian
     AX25 = 5   # AX.25 packet
-    F16 = 6    # 16-bit float (F16LE in C)
+    F16LE = 6  # 16-bit float little-endian
+    OPUS_VOIP = 7  # Opus with APPLICATION_VOIP
+    F32BE = 8  # 32-bit float big-endian
+    F16BE = 9  # 16-bit float big-endian
+    UNUSED_ENCODING = 10  # Sentinel, not used
+    
+    # Backward compatibility aliases
+    F32 = F32LE
+    F16 = F16LE
