@@ -123,15 +123,13 @@ def main():
     if args.discover:
         print("Discovering channels...")
         channels = discover_channels(timeout=3.0)
-        channel = None
-        for ch in channels:
-            if ch.ssrc == args.ssrc:
-                channel = ch
-                break
+        
+        # FIX: Properly access the channel from the dictionary
+        channel = channels.get(args.ssrc)
         
         if channel is None:
             print(f"SSRC {args.ssrc} not found in discovered channels")
-            print(f"Available SSRCs: {[ch.ssrc for ch in channels]}")
+            print(f"Available SSRCs: {list(channels.keys())}")
             return 1
         
         print(f"Found channel: {channel.frequency/1e6:.3f} MHz, {channel.sample_rate} Hz")

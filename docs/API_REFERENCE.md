@@ -75,39 +75,55 @@ with RadiodControl("radiod.local") as control:
 Create and configure a new radiod channel with all parameters in a single packet.
 
 ```python
-create_channel(ssrc: int, 
-               frequency_hz: float,
+create_channel(frequency_hz: float,
                preset: str = "iq",
                sample_rate: Optional[int] = None,
                agc_enable: int = 0,
-               gain: float = 0.0) → None
+               gain: float = 0.0,
+               destination: Optional[str] = None,
+               encoding: int = 0,
+               ssrc: Optional[int] = None) → int
 ```
 
 **Parameters:**
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `ssrc` | int | Yes | - | Channel identifier (0-4294967295). Convention: use frequency in Hz |
 | `frequency_hz` | float | Yes | - | RF frequency in Hz (typically 0-10 GHz) |
 | `preset` | str | No | "iq" | Demodulation mode: "iq", "usb", "lsb", "am", "fm", "cw" |
 | `sample_rate` | int | No | None | Output sample rate in Hz (e.g., 12000, 48000, 16000) |
 | `agc_enable` | int | No | 0 | AGC: 0=disabled/manual, 1=enabled |
 | `gain` | float | No | 0.0 | Manual gain in dB (-60 to +60) when agc_enable=0 |
+| `destination` | str | No | None | RTP destination multicast address (e.g., "239.1.2.3" or "239.1.2.3:5004"). If None, uses radiod's default |
+| `encoding` | int | No | 0 | Output encoding (0=default, 4=F32, 5=F16, etc.). See `Encoding` class for options |
+| `ssrc` | int | No | None | Channel identifier (0-4294967295). If None, automatically allocated from parameters |
 
 **Raises:**
 - `ValidationError`: If parameters are out of valid ranges
 - `CommandError`: If command fails to send
 - `RuntimeError`: If not connected to radiod
 
+**Returns:**
+- `int`: The SSRC of the created channel
+
 **Example:**
 ```python
-control.create_channel(
-    ssrc=14074000,
+# Basic usage with automatic SSRC allocation
+ssrc = control.create_channel(
     frequency_hz=14.074e6,
     preset="usb",
+    sample_rate=12000
+)
+print(f"Created channel with SSRC: {ssrc}")
+
+# Advanced usage with specific encoding and destination
+ssrc = control.create_channel(
+    frequency_hz=10.0e6,
+    preset="am",
     sample_rate=12000,
-    agc_enable=0,
-    gain=0.0
+    agc_enable=1,
+    destination="239.1.2.3:5004",
+    encoding=Encoding.F32
 )
 ```
 

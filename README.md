@@ -13,6 +13,7 @@ Control radiod channels for any application: AM/FM/SSB radio, WSPR monitoring, S
 
 - [Features](#features)
 - [Installation](#installation)
+- [Getting Started](docs/GETTING_STARTED.md)
 - [Quick Start](#quick-start)
 - [Documentation](#documentation)
 - [Examples](#examples)
