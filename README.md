@@ -15,6 +15,7 @@ Control radiod channels for any application: AM/FM/SSB radio, WSPR monitoring, S
 - [Installation](#installation)
 - [Getting Started](docs/GETTING_STARTED.md)
 - [Quick Start](#quick-start)
+- [ka9q-radio Compatibility](#ka9q-radio-compatibility)
 - [Documentation](#documentation)
 - [Examples](#examples)
 - [Use Cases](#use-cases)
@@ -67,6 +68,7 @@ control.create_channel(
 )
 
 # RTP stream now available with SSRC 10000000
+```
 
 ### Request Specific Output Encoding
 
@@ -82,7 +84,6 @@ control.ensure_channel(
     sample_rate=12000,
     encoding=Encoding.F32
 )
-```
 ```
 
 ### Monitor WSPR Bands
@@ -196,6 +197,62 @@ with RadiodControl("bee1-hf-status.local") as control:
 ```
 
 > Note: `remove_channel()` finishes instantly on the client; radiod’s poller typically purges the channel within the next second.
+
+## ka9q-radio Compatibility
+
+`ka9q-python` tracks a specific git commit of [ka9q-radio](https://github.com/ka9q/ka9q-radio) to ensure its protocol definitions (`StatusType`, `Encoding`) match the C headers exactly. This prevents subtle bugs from protocol drift between the two projects.
+
+### How It Works
+
+| File | Role |
+|------|------|
+| `ka9q_radio_compat` | Plain-text pin recording the validated ka9q-radio commit hash |
+| `ka9q/compat.py` | Importable `KA9Q_RADIO_COMMIT` constant for deployment tooling |
+| `ka9q/types.py` | Auto-generated from ka9q-radio's `status.h` and `rtp.h` |
+| `scripts/sync_types.py` | The tool that parses C headers and regenerates `types.py` |
+| `tests/test_protocol_compat.py` | Drift test (runs automatically if `../ka9q-radio` exists) |
+
+### Checking for Drift
+
+If you have the ka9q-radio source tree at `../ka9q-radio`:
+
+```bash
+python scripts/sync_types.py --check    # CI mode: exits non-zero on drift
+python scripts/sync_types.py --diff     # Preview changes without modifying anything
+```
+
+### Syncing After ka9q-radio Updates
+
+```bash
+python scripts/sync_types.py --apply    # Regenerates types.py, updates pins
+git diff ka9q/types.py                  # Review the changes
+python -m pytest tests/                 # Verify nothing broke
+```
+
+The `--apply` mode updates three files atomically:
+1. `ka9q/types.py` — regenerated from the C headers
+2. `ka9q_radio_compat` — updated with the new commit hash
+3. `ka9q/compat.py` — updated with the new commit hash (importable)
+
+### For Deployment Tooling
+
+`ka9q-update` (or any deployment tool) can read the pinned commit to ensure the correct `radiod` version is running:
+
+```python
+from ka9q.compat import KA9Q_RADIO_COMMIT
+
+print(f"This ka9q-python requires ka9q-radio at {KA9Q_RADIO_COMMIT[:12]}")
+```
+
+### Running the Drift Test
+
+The pytest drift test runs automatically as part of the test suite:
+
+```bash
+python -m pytest tests/test_protocol_compat.py -v
+```
+
+It auto-skips if `../ka9q-radio` is not present, so CI environments without the C source tree are unaffected.
 
 ## Documentation
 

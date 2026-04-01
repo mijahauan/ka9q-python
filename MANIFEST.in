@@ -1,24 +1,23 @@
 # Include documentation
 include README.md
 include LICENSE
-include SUMMARY.md
+include CHANGELOG.md
+include RELEASE_NOTES_v3.5.0.md
 
 # Include protocol compatibility pin
 include ka9q_radio_compat
 
 # Include sync tooling
 recursive-include scripts *.py
-include TUNE_IMPLEMENTATION.md
-include NATIVE_DISCOVERY.md
-include CROSS_PLATFORM_SUPPORT.md
-include TEST_RESULTS.md
-include TESTING_SUMMARY.md
 
 # Include examples
 recursive-include examples *.py
 
 # Include tests
 recursive-include tests *.py
+
+# Include docs
+recursive-include docs *.md
 
 # Exclude compiled files
 global-exclude *.pyc

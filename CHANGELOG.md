@@ -1,5 +1,42 @@
 # Changelog
 
+## [3.5.0] - 2026-03-31
+
+### Added
+
+- **Protocol Drift Detection** (`scripts/sync_types.py`): New tool that code-generates `ka9q/types.py` from the ka9q-radio C headers (`status.h`, `rtp.h`). Three modes:
+  - `--check`: exits non-zero if `types.py` is out of sync (for CI and tests)
+  - `--apply`: regenerates `types.py` and updates compatibility pins
+  - `--diff`: dry-run showing what would change
+- **Compatibility Pin** (`ka9q_radio_compat`): Tracked plain-text file recording the ka9q-radio commit hash that `types.py` was last validated against.
+- **Importable Pin** (`ka9q/compat.py`): `KA9Q_RADIO_COMMIT` constant for use by deployment tooling (e.g. `ka9q-update`).
+- **Drift Test** (`tests/test_protocol_compat.py`): Pytest test that runs `sync_types.py --check` and verifies the pin matches ka9q-radio HEAD. Auto-skips when ka9q-radio source is not present.
+- **New StatusType**: `SPECTRUM_OVERLAP` (116) for FFT window overlap control.
+- **New Encodings**: `MULAW` (10), `ALAW` (11) for telephony-grade audio.
+- **`set_max_delay()`**: New control method replacing `set_packet_buffering()`. Sets maximum aggregation delay in blocks (0-5).
+
+### Changed
+
+- **StatusType renames** (matching ka9q-radio HEAD):
+  - `MINPACKET` → `MAXDELAY`
+  - `GAINSTEP` → `UNUSED4`
+  - `CONVERTER_OFFSET` → `UNUSED3`
+  - `COHERENT_BIN_SPACING` → `UNUSED2`
+  - `BLOCKS_SINCE_POLL` → `UNUSED`
+- **Encoding**: `UNUSED_ENCODING` sentinel shifted from 10 to 12.
+- `types.py` is now auto-generated with C header comments preserved.
+
+### Removed
+
+- `compare_encodings.py` and `compare_status_types.py` (replaced by `scripts/sync_types.py`).
+
+### Backward Compatibility
+
+- `set_packet_buffering()` retained as a deprecated alias for `set_max_delay()`.
+- `Encoding.F32` and `Encoding.F16` aliases retained for `F32LE` and `F16LE`.
+
+---
+
 ## [3.4.2] - 2026-02-05
 
 ### Added
