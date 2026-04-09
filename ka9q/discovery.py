@@ -33,6 +33,7 @@ class ChannelInfo:
     gps_time: Optional[int] = None  # GPS nanoseconds when RTP_TIMESNAP was captured
     rtp_timesnap: Optional[int] = None  # RTP timestamp at GPS_TIME
     encoding: int = 0  # stream encoding (0=none, 4=F32, etc)
+    chain_delay_correction_ns: Optional[int] = None  # L6 BPSK PPS chain-delay calibration (nanoseconds)
 
 
 def _create_status_listener_socket(multicast_addr: str, interface: Optional[str] = None) -> socket.socket:

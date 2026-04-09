@@ -56,7 +56,7 @@ Lower-level usage (explicit control):
         )
         print(f"Created channel with SSRC: {ssrc}")
 """
-__version__ = '3.5.0'
+__version__ = '3.6.0'
 __author__ = 'Michael Hauan AC0G'
 
 from .control import RadiodControl, allocate_ssrc
@@ -145,8 +145,14 @@ __all__ = [
     # Utilities
     'generate_multicast_ip',
     'ChannelMonitor',
+
+    # L6 BPSK PPS calibration
+    'BpskPpsCalibrator',
+    'PpsCalibrationResult',
+    'NotchFilter500Hz',
 ]
 
 from .addressing import generate_multicast_ip
 from .monitor import ChannelMonitor
 from .compat import KA9Q_RADIO_COMMIT
+from .pps_calibrator import BpskPpsCalibrator, PpsCalibrationResult, NotchFilter500Hz

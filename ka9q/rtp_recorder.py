@@ -155,7 +155,13 @@ def rtp_to_wallclock(rtp_timestamp: int, channel: ChannelInfo) -> Optional[float
     time_offset = BILLION * rtp_delta // channel.sample_rate
     
     wall_time_ns = sender_time + time_offset
-    
+
+    # Apply L6 BPSK PPS chain-delay calibration if available.
+    # This corrects for the end-to-end RF→ADC→DSP→RTP latency
+    # measured by a local BPSK PPS injector.
+    if channel.chain_delay_correction_ns is not None:
+        wall_time_ns -= channel.chain_delay_correction_ns
+
     # Convert to Unix seconds
     return wall_time_ns / BILLION
 

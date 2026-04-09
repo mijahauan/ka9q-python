@@ -1,5 +1,22 @@
 # Changelog
 
+## [3.6.0] - 2026-04-09
+
+### Added
+
+- **L6 BPSK PPS chain-delay calibration** (`ka9q/pps_calibrator.py`): New utility module for measuring end-to-end RF-to-RTP chain delay using a local GPS-disciplined BPSK PPS injector (WB6CXC design). Three new public classes:
+  - `BpskPpsCalibrator` — detects PPS edges in BPSK IQ streams via phase-transition detection, validates timing consistency, and reports the measured chain delay once locked. Algorithm ported from Scott Newell's wd-record.c `bpsk_state_machine()`.
+  - `PpsCalibrationResult` — dataclass returned by the calibrator with `chain_delay_ns`, `chain_delay_samples`, edge counters, and lock status.
+  - `NotchFilter500Hz` — biquad IIR notch filter at 500 Hz for interference rejection on the BPSK channel.
+- **`ChannelInfo.chain_delay_correction_ns`** (`ka9q/discovery.py`): New optional field. When set, `rtp_to_wallclock()` automatically subtracts this correction from the computed wall time, compensating for the measured RF/ADC/DSP/RTP chain latency. Defaults to `None` (no correction; backward compatible).
+- All three new classes exported from `ka9q/__init__.py`.
+
+### Changed
+
+- **`rtp_to_wallclock()`** (`ka9q/rtp_recorder.py`): Now applies `channel.chain_delay_correction_ns` when present. Existing callers are unaffected (the field defaults to `None`).
+
+---
+
 ## [3.5.1] - 2026-04-09
 
 ### Added
