@@ -2547,20 +2547,20 @@ class RadiodControl:
     def set_demod_type(self, ssrc: int, demod_type: int):
         """
         Set demodulator type
-        
+
         Args:
             ssrc: SSRC of the channel
-            demod_type: Demodulator type (0=LINEAR, 1=FM, 2=WFM, 3=SPECTRUM)
-        
+            demod_type: Demodulator type (0=LINEAR, 1=FM, 2=WFM, 3=SPECTRUM, 4=SPECTRUM2)
+
         Raises:
             ValidationError: If demod_type is invalid
-        
+
         Example:
             >>> control.set_demod_type(ssrc=12345, demod_type=1)  # FM
         """
         _validate_ssrc(ssrc)
-        if not (0 <= demod_type <= 3):
-            raise ValidationError(f"Invalid demod_type: {demod_type} (must be 0-3)")
+        if not (0 <= demod_type <= 4):
+            raise ValidationError(f"Invalid demod_type: {demod_type} (must be 0-4)")
         
         cmdbuffer = bytearray()
         cmdbuffer.append(CMD)

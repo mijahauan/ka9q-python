@@ -1,6 +1,6 @@
 """
 Protocol compatibility test — catches drift between ka9q/types.py
-and the ka9q-radio C headers (status.h, rtp.h).
+and the ka9q-radio C headers (status.h, rtp.h, radio.h, window.h).
 
 Skipped automatically when ka9q-radio source is not available on disk.
 """
@@ -43,7 +43,7 @@ def test_types_match_status_h():
         cwd=str(PROJECT_ROOT),
     )
     assert result.returncode == 0, (
-        f"types.py is out of sync with ka9q-radio status.h / rtp.h:\n"
+        f"types.py is out of sync with ka9q-radio headers:\n"
         f"{result.stdout}\n{result.stderr}"
     )
 

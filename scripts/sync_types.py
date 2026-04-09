@@ -2,7 +2,8 @@
 """
 Synchronize ka9q/types.py with ka9q-radio C header files.
 
-Parses enum status_type from status.h and enum encoding from rtp.h,
+Parses enum status_type from status.h, enum encoding from rtp.h,
+enum demod_type from radio.h, and enum window_type from window.h,
 then either checks for drift or regenerates types.py.
 
 Usage:
@@ -90,10 +91,10 @@ def get_git_commit(repo_path: Path) -> str:
 # ---------------------------------------------------------------------------
 # types.py parser — reads the CURRENT file to learn what Python already has
 # ---------------------------------------------------------------------------
-def parse_types_py() -> Tuple[Dict[str, int], Dict[str, int]]:
+def parse_types_py() -> Tuple[Dict[str, int], Dict[str, int], Dict[str, int], Dict[str, int]]:
     """
     Parse the existing types.py and return:
-        (status_entries, encoding_entries)
+        (status_entries, encoding_entries, demod_entries, window_entries)
     Each is {name: value}.  Aliases (F32 = F32LE) are excluded.
     """
     # We import the module directly so we get the truth including aliases
@@ -116,7 +117,12 @@ def parse_types_py() -> Tuple[Dict[str, int], Dict[str, int]]:
             entries[attr] = val
         return entries
 
-    return _class_entries(mod.StatusType), _class_entries(mod.Encoding)
+    return (
+        _class_entries(mod.StatusType),
+        _class_entries(mod.Encoding),
+        _class_entries(mod.DemodType),
+        _class_entries(mod.WindowType),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -135,6 +141,8 @@ STATUS_SECTIONS = [
 def generate_types_py(
     status_entries: List[Tuple[str, int, str]],
     encoding_entries: List[Tuple[str, int, str]],
+    demod_entries: List[Tuple[str, int, str]],
+    window_entries: List[Tuple[str, int, str]],
     commit_hash: str,
 ) -> str:
     """Generate the full contents of ka9q/types.py from parsed enums."""
@@ -180,12 +188,41 @@ def generate_types_py(
     # Backward-compat aliases
     lines.append("")
     lines.append("    # Backward compatibility aliases")
-    # Only emit aliases if the canonical names exist
     enc_names = {n for n, _, _ in encoding_entries}
     if "F32LE" in enc_names:
         lines.append("    F32 = F32LE")
     if "F16LE" in enc_names:
         lines.append("    F16 = F16LE")
+
+    # Demodulator types
+    lines.append("")
+    lines.append("")
+    lines.append("# Demodulator types — auto-generated from ka9q-radio/src/radio.h")
+    lines.append("class DemodType:")
+    lines.append(
+        '    """Demodulator types — values must match '
+        'ka9q-radio/src/radio.h enum demod_type"""'
+    )
+    lines.append("")
+
+    for name, value, comment in demod_entries:
+        suffix = f"  # {comment}" if comment else ""
+        lines.append(f"    {name} = {value}{suffix}")
+
+    # Window types
+    lines.append("")
+    lines.append("")
+    lines.append("# Window types — auto-generated from ka9q-radio/src/window.h")
+    lines.append("class WindowType:")
+    lines.append(
+        '    """FFT window types — values must match '
+        'ka9q-radio/src/window.h enum window_type"""'
+    )
+    lines.append("")
+
+    for name, value, comment in window_entries:
+        suffix = f"  # {comment}" if comment else ""
+        lines.append(f"    {name} = {value}{suffix}")
 
     lines.append("")  # final newline
     return "\n".join(lines) + "\n"
@@ -194,54 +231,53 @@ def generate_types_py(
 # ---------------------------------------------------------------------------
 # Diff / check / apply
 # ---------------------------------------------------------------------------
+def _check_enum(
+    label: str,
+    c_entries: List[Tuple[str, int, str]],
+    py_entries: Dict[str, int],
+    alias_names: Optional[Set[str]] = None,
+) -> List[str]:
+    """Compare a single C enum against its Python counterpart."""
+    if alias_names is None:
+        alias_names = set()
+    issues: List[str] = []
+    c_map = {name: val for name, val, _ in c_entries}
+
+    for name, val, comment in c_entries:
+        if name not in py_entries:
+            issues.append(f"{label}: MISSING  {name} = {val}  // {comment}")
+        elif py_entries[name] != val:
+            issues.append(
+                f"{label}: VALUE MISMATCH  {name}: "
+                f"C={val}, Python={py_entries[name]}"
+            )
+
+    for name, val in sorted(py_entries.items(), key=lambda x: x[1]):
+        if name in alias_names:
+            continue
+        if name not in c_map:
+            issues.append(f"{label}: EXTRA in Python  {name} = {val}")
+
+    return issues
+
+
 def compute_drift(
     c_status: List[Tuple[str, int, str]],
     c_encoding: List[Tuple[str, int, str]],
+    c_demod: List[Tuple[str, int, str]],
+    c_window: List[Tuple[str, int, str]],
 ) -> List[str]:
     """
     Compare C headers against current types.py.
     Returns a list of human-readable drift descriptions (empty = in sync).
     """
-    py_status, py_encoding = parse_types_py()
+    py_status, py_encoding, py_demod, py_window = parse_types_py()
     issues: List[str] = []
 
-    # --- StatusType ---
-    c_status_map = {name: val for name, val, _ in c_status}
-
-    # Missing in Python
-    for name, val, comment in c_status:
-        if name not in py_status:
-            issues.append(f"StatusType: MISSING  {name} = {val}  // {comment}")
-        elif py_status[name] != val:
-            issues.append(
-                f"StatusType: VALUE MISMATCH  {name}: "
-                f"C={val}, Python={py_status[name]}"
-            )
-
-    # Extra in Python (removed from C or renamed)
-    for name, val in sorted(py_status.items(), key=lambda x: x[1]):
-        if name not in c_status_map:
-            issues.append(f"StatusType: EXTRA in Python  {name} = {val}")
-
-    # --- Encoding ---
-    c_enc_map = {name: val for name, val, _ in c_encoding}
-    # Exclude known aliases from comparison
-    alias_names = {"F32", "F16"}
-
-    for name, val, comment in c_encoding:
-        if name not in py_encoding:
-            issues.append(f"Encoding: MISSING  {name} = {val}  // {comment}")
-        elif py_encoding[name] != val:
-            issues.append(
-                f"Encoding: VALUE MISMATCH  {name}: "
-                f"C={val}, Python={py_encoding[name]}"
-            )
-
-    for name, val in sorted(py_encoding.items(), key=lambda x: x[1]):
-        if name in alias_names:
-            continue
-        if name not in c_enc_map:
-            issues.append(f"Encoding: EXTRA in Python  {name} = {val}")
+    issues.extend(_check_enum("StatusType", c_status, py_status))
+    issues.extend(_check_enum("Encoding", c_encoding, py_encoding, {"F32", "F16"}))
+    issues.extend(_check_enum("DemodType", c_demod, py_demod))
+    issues.extend(_check_enum("WindowType", c_window, py_window))
 
     return issues
 
@@ -284,6 +320,8 @@ def main() -> int:
 
     status_h = radio_path / "src" / "status.h"
     rtp_h = radio_path / "src" / "rtp.h"
+    radio_h = radio_path / "src" / "radio.h"
+    window_h = radio_path / "src" / "window.h"
 
     if not status_h.exists():
         print(f"ERROR: {status_h} not found", file=sys.stderr)
@@ -293,21 +331,26 @@ def main() -> int:
         )
         return 2
 
-    if not rtp_h.exists():
-        print(f"ERROR: {rtp_h} not found", file=sys.stderr)
-        return 2
+    for h in [rtp_h, radio_h, window_h]:
+        if not h.exists():
+            print(f"ERROR: {h} not found", file=sys.stderr)
+            return 2
 
     # Parse C headers
     status_text = status_h.read_text()
     rtp_text = rtp_h.read_text()
+    radio_text = radio_h.read_text()
+    window_text = window_h.read_text()
 
     c_status = parse_c_enum(status_text, "status_type")
     c_encoding = parse_c_enum(rtp_text, "encoding")
+    c_demod = parse_c_enum(radio_text, "demod_type")
+    c_window = parse_c_enum(window_text, "window_type")
 
     commit = get_git_commit(radio_path)
 
     if args.check or args.diff:
-        issues = compute_drift(c_status, c_encoding)
+        issues = compute_drift(c_status, c_encoding, c_demod, c_window)
         if issues:
             print(f"Protocol drift detected vs ka9q-radio {commit[:12]}:")
             print()
@@ -323,7 +366,7 @@ def main() -> int:
             return 0
 
     # --apply
-    new_content = generate_types_py(c_status, c_encoding, commit)
+    new_content = generate_types_py(c_status, c_encoding, c_demod, c_window, commit)
 
     # Read current for comparison
     old_content = TYPES_PY.read_text() if TYPES_PY.exists() else ""
@@ -365,28 +408,23 @@ def main() -> int:
     print(f"Updated {COMPAT_PY} → {commit[:12]}")
 
     # Report what changed
-    issues = []
     if old_content:
         # Re-parse to show the delta
-        py_status_old, py_enc_old = parse_types_py()
-        c_status_map = {name: val for name, val, _ in c_status}
-        c_enc_map = {name: val for name, val, _ in c_encoding}
+        py_status_old, py_enc_old, py_demod_old, py_window_old = parse_types_py()
 
-        added_s = [n for n, v, _ in c_status if n not in py_status_old]
-        removed_s = [n for n in py_status_old if n not in c_status_map]
-        added_e = [n for n, v, _ in c_encoding if n not in py_enc_old]
-        removed_e = [
-            n for n in py_enc_old if n not in c_enc_map and n not in {"F32", "F16"}
-        ]
-
-        if added_s:
-            print(f"  StatusType added:   {', '.join(added_s)}")
-        if removed_s:
-            print(f"  StatusType removed: {', '.join(removed_s)}")
-        if added_e:
-            print(f"  Encoding added:     {', '.join(added_e)}")
-        if removed_e:
-            print(f"  Encoding removed:   {', '.join(removed_e)}")
+        for label, c_entries, py_old, aliases in [
+            ("StatusType", c_status, py_status_old, set()),
+            ("Encoding", c_encoding, py_enc_old, {"F32", "F16"}),
+            ("DemodType", c_demod, py_demod_old, set()),
+            ("WindowType", c_window, py_window_old, set()),
+        ]:
+            c_map = {name: val for name, val, _ in c_entries}
+            added = [n for n, v, _ in c_entries if n not in py_old]
+            removed = [n for n in py_old if n not in c_map and n not in aliases]
+            if added:
+                print(f"  {label} added:   {', '.join(added)}")
+            if removed:
+                print(f"  {label} removed: {', '.join(removed)}")
 
     print()
     print("Next steps:")

@@ -67,7 +67,7 @@ from .discovery import (
     discover_radiod_services,
     ChannelInfo
 )
-from .types import StatusType, Encoding
+from .types import StatusType, Encoding, DemodType, WindowType
 from .exceptions import Ka9qError, ConnectionError, CommandError, ValidationError
 from .rtp_recorder import (
     RTPRecorder,
@@ -111,6 +111,8 @@ __all__ = [
     # Types
     'StatusType',
     'Encoding',
+    'DemodType',
+    'WindowType',
     
     # Exceptions
     'Ka9qError',

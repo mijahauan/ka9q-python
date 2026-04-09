@@ -1,5 +1,24 @@
 # Changelog
 
+## [3.5.1] - 2026-04-09
+
+### Added
+
+- **`DemodType` enum** (`ka9q/types.py`): New auto-generated class mirroring `enum demod_type` from ka9q-radio `radio.h`. Exposes `LINEAR_DEMOD`, `FM_DEMOD`, `WFM_DEMOD`, `SPECT_DEMOD`, `SPECT2_DEMOD`, and `N_DEMOD`.
+- **`WindowType` enum** (`ka9q/types.py`): New auto-generated class mirroring `enum window_type` from ka9q-radio `window.h`. Exposes all 9 FFT window types (`KAISER_WINDOW` through `HP5FT_WINDOW`) plus `N_WINDOW` sentinel.
+- Both new types are exported from `ka9q/__init__.py` and tracked by the drift detection system.
+
+### Fixed
+
+- **`set_demod_type()` validation**: Was rejecting demod_type=4 (`SPECT2_DEMOD`), the spectrum v2 mode added in ka9q-radio. Validation range corrected from 0-3 to 0-4.
+
+### Changed
+
+- **`sync_types.py` expanded**: Now parses 4 C headers (`status.h`, `rtp.h`, `radio.h`, `window.h`) instead of 2. Drift detection covers `DemodType` and `WindowType` in addition to `StatusType` and `Encoding`. The `_check_enum()` helper replaces duplicated per-enum comparison logic.
+- **Compatibility pin bumped** to ka9q-radio `d39fea8` (no protocol-level changes from previous pin `6b0fec7`; intervening commits were wd-record and bug fixes).
+
+---
+
 ## [3.5.0] - 2026-03-31
 
 ### Added
