@@ -1,5 +1,20 @@
 # Changelog
 
+## [3.7.1] - 2026-04-12
+
+### Fixed
+
+- **S16BE/S16LE audio parsing in `RadiodStream`**: `_parse_samples()` always decoded audio-mode RTP payloads as float32, regardless of the channel's actual encoding. When encoding was S16BE (used by FT4/FT8 channels at 12 kHz), a 240-byte payload containing 120 int16 samples was misinterpreted as 60 float32 values. The `PacketResequencer` then reported a 120-sample gap on every packet (~2500 gaps/minute), reducing stream completeness to ~37% and making the stream unusable for downstream consumers like `decode_ft8`. Now dispatches on `channel.encoding`: S16BE (`>i2`), S16LE (`<i2`), F32BE (`>f4`), and default F32LE (`np.float32`). All int16 formats are normalized to float32 (÷32768) in the callback.
+- **`ManagedStream` now accepts `encoding` parameter**: Added `encoding: int = 0` to `__init__()`, passed through to both `ensure_channel()` call sites (initial provisioning and stream restoration). Without this, `ManagedStream` would re-provision a channel without encoding on restore, causing format mismatches. Clients using non-default encoding (S16BE, S16LE, F32BE) should pass `encoding=` to the constructor. This eliminates the need for hf-timestd's `RobustManagedStream` workaround.
+
+### Client migration
+
+- **Clients using `ManagedStream` with non-default encoding**: Pass `encoding=<int>` to the constructor. Example: `ManagedStream(control=ctl, frequency_hz=14.074e6, preset="usb", sample_rate=12000, encoding=2)` for S16BE.
+- **Clients using bare `RadiodStream` with S16BE/S16LE**: No code change needed — samples are now correctly decoded to float32 in the callback. Note that if client code was compensating for the old bug (e.g., manually byte-swapping), that workaround should be removed.
+- **hf-timestd**: Can replace `RobustManagedStream` (stream_recorder_v2.py lines 40-195) with `ka9q.ManagedStream(encoding=Encoding.F32)` and delete the wrapper class.
+
+---
+
 ## [3.7.0] - 2026-04-12
 
 ### Changed
