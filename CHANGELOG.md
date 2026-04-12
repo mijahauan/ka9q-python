@@ -1,5 +1,21 @@
 # Changelog
 
+## [3.7.0] - 2026-04-12
+
+### Changed
+
+- **Radiod-aware multicast addressing**: `generate_multicast_ip()` now accepts a `radiod_host` keyword argument. When provided, the hash is computed over both the client identifier and the radiod host, producing a distinct multicast IP for each (client, radiod) pair. This prevents address collisions when the same client application (e.g., `hf-timestd`) connects to multiple radiod instances simultaneously.
+- **Radiod-aware SSRC allocation**: `allocate_ssrc()` now accepts a `radiod_host` parameter, included in the deterministic hash. The same channel parameters on different radiod instances produce distinct SSRCs.
+- **Automatic radiod identity propagation**: `RadiodControl.create_channel()` and `RadiodControl.ensure_channel()` automatically pass `self.status_address` as `radiod_host` when computing SSRCs. No API changes needed for callers using the `RadiodControl` methods — radiod-aware uniqueness is automatic.
+
+### Backward Compatibility
+
+- `generate_multicast_ip(unique_id)` without `radiod_host` produces identical results to v3.6.0.
+- `allocate_ssrc()` without `radiod_host` changes the hash format (trailing separator added), so SSRC values will differ from v3.6.0 for existing deployments. This is intentional — channels will be re-created with new SSRCs on upgrade. The old SSRCs were not radiod-aware and could collide when a client talked to multiple radiod instances.
+- `ManagedStream`, `RadiodStream`, and `RTPRecorder` require no changes — they receive the already-computed SSRC/address via `ChannelInfo`.
+
+---
+
 ## [3.6.0] - 2026-04-09
 
 ### Added

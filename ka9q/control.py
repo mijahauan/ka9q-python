@@ -71,32 +71,38 @@ def allocate_ssrc(
     agc: bool = False,
     gain: float = 0.0,
     destination: Optional[str] = None,
-    encoding: int = 0
+    encoding: int = 0,
+    radiod_host: Optional[str] = None
 ) -> int:
     """
     Allocate a deterministic SSRC from channel parameters.
-    
+
     This function generates a consistent SSRC for a given set of channel
     parameters. The same parameters will always produce the same SSRC,
     enabling stream sharing and coordination between applications.
-    
+
     The algorithm matches signal-recorder's StreamSpec.ssrc_hash() for
     cross-library compatibility.
-    
+
     Args:
         frequency_hz: Center frequency in Hz
         preset: Demodulation mode ("iq", "usb", "lsb", "am", "fm", "cw")
         sample_rate: Output sample rate in Hz
         agc: Automatic gain control enabled
         gain: Manual gain in dB
-        
+        destination: RTP destination multicast address (optional)
+        encoding: Output encoding type
+        radiod_host: Optional radiod hostname or address. When provided the
+            hash includes the radiod identity so the same client parameters
+            talking to different radiod instances produce distinct SSRCs.
+
     Returns:
         Deterministic 31-bit positive SSRC value
-        
+
     Example:
         >>> ssrc = allocate_ssrc(10.0e6, "iq", 16000)
         >>> print(f"SSRC for 10 MHz IQ @ 16kHz: {ssrc}")
-        
+
         # Same parameters always give same SSRC
         >>> ssrc2 = allocate_ssrc(10.0e6, "iq", 16000)
         >>> assert ssrc == ssrc2
@@ -110,7 +116,8 @@ def allocate_ssrc(
         f"{'1' if agc else '0'}|"      # AGC as 1/0
         f"{round(gain, 1)}|"           # Gain rounded to 0.1 dB
         f"{destination or ''}|"        # Destination (empty string if None)
-        f"{encoding}"                  # Encoding type
+        f"{encoding}|"                 # Encoding type
+        f"{radiod_host or ''}"         # Radiod instance identity
     )
     
     # Use SHA-256 for a stable, platform-independent hash
@@ -1143,7 +1150,8 @@ class RadiodControl:
                 agc=bool(agc_enable),
                 gain=gain,
                 destination=destination,
-                encoding=encoding
+                encoding=encoding,
+                radiod_host=self.status_address
             )
             logger.info(f"Auto-allocated SSRC: {ssrc}")
         
@@ -1349,7 +1357,7 @@ class RadiodControl:
         _validate_preset(preset)
         _validate_timeout(timeout)
         
-        # Compute deterministic SSRC from parameters
+        # Compute deterministic SSRC from parameters (including radiod identity)
         ssrc = allocate_ssrc(
             frequency_hz=frequency_hz,
             preset=preset,
@@ -1357,9 +1365,10 @@ class RadiodControl:
             agc=bool(agc_enable),
             gain=gain,
             destination=destination,
-            encoding=encoding
+            encoding=encoding,
+            radiod_host=self.status_address
         )
-        logger.info(f"ensure_channel: computed SSRC {ssrc} for {frequency_hz/1e6:.3f} MHz {preset} dest={destination} enc={encoding}")
+        logger.info(f"ensure_channel: computed SSRC {ssrc} for {frequency_hz/1e6:.3f} MHz {preset} dest={destination} enc={encoding} radiod={self.status_address}")
         
         # Check if channel already exists with matching parameters
         existing_channels = discover_channels(self.status_address, listen_duration=1.0)

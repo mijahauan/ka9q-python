@@ -23,6 +23,21 @@ print(my_app_ip)
 
 This prevents the need for a central database of assigned IPs. As long as your App ID is unique, your IP will be unique (with >99.9999% probability).
 
+### Radiod-Aware Addressing (v3.7.0+)
+
+When a single client talks to multiple radiod instances, pass `radiod_host` to get a distinct address per (client, radiod) pair:
+
+```python
+from ka9q import generate_multicast_ip
+
+# Same app, different radiod instances → different multicast IPs
+ip_sdr1 = generate_multicast_ip("hf-timestd", radiod_host="sdr1-hf-status.local")
+ip_sdr2 = generate_multicast_ip("hf-timestd", radiod_host="sdr2-hf-status.local")
+assert ip_sdr1 != ip_sdr2
+```
+
+When using `RadiodControl.ensure_channel()` or `RadiodControl.create_channel()`, the radiod identity is included automatically — no code changes needed.
+
 ## 2. Using Explicit Destinations
 
 You can now pass a `destination` parameter to `ensure_channel` (and `create_channel`).
