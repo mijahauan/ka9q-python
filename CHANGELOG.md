@@ -1,5 +1,24 @@
 # Changelog
 
+## [3.8.0] - 2026-04-12
+
+### Added
+
+- **`MultiStream`**: Shared-socket multi-SSRC receiver. Opens a single UDP socket and receive thread for all channels on a given multicast group, demultiplexes RTP packets by SSRC, and dispatches per-channel sample callbacks identical in shape to `RadiodStream`/`ManagedStream`. Solves the kernel-copy scalability problem that arose when N single-channel streams each bound their own socket on the same multicast group — every packet was delivered to every socket, and each worker parsed/discarded 95% of traffic in Python. `MultiStream` drops that load to one socket and one full-header parse per received packet (SSRC is peeked pre-parse). Includes per-channel drop detection and automatic restoration via `ensure_channel()`.
+- **`parse_rtp_samples()`** helper in `stream.py`: factored out of `RadiodStream._parse_samples` so `MultiStream` and any future receiver can share one implementation of encoding-aware payload decoding (F32LE/F32BE, S16LE/S16BE, IQ).
+
+### Client migration
+
+- **Multi-channel clients on one radiod**: consider replacing a loop of `ManagedStream` instances with a single `MultiStream`. API: `multi.add_channel(frequency_hz, preset, sample_rate, encoding, on_samples=..., on_stream_dropped=..., on_stream_restored=...)` per channel, then `multi.start()`. All channels must resolve to the same multicast group (enforced; raises `ValueError` on mismatch — caller can bucket into multiple `MultiStream`s).
+- **Single-channel clients**: no change. `RadiodStream` / `ManagedStream` behavior is unchanged.
+
+### Verified
+
+- Live 2-channel smoke test (`examples/multi_stream_smoke.py`) against `bee3-status.local`: FT8+WSPR 20m on shared group, 99.1% sample completeness, zero gaps, no unknown-SSRC warnings.
+- End-to-end validation via psk-recorder migration: 5 channels on one multicast group, identical per-sink sample counts, clean FT8/FT4 decodes.
+
+---
+
 ## [3.7.1] - 2026-04-12
 
 ### Fixed
