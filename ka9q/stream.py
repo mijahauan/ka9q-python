@@ -350,7 +350,7 @@ class RadiodStream:
             ).isoformat()
     
     def _parse_samples(self, payload: bytes) -> Optional[np.ndarray]:
-        """Parse samples from RTP payload."""
+        """Parse samples from RTP payload based on channel encoding."""
         try:
             if self._is_iq:
                 # IQ mode: float32 interleaved I/Q -> complex64
@@ -362,9 +362,23 @@ class RadiodStream:
                 samples = floats[0::2] + 1j * floats[1::2]
                 return samples.astype(np.complex64)
             else:
-                # Audio mode: float32 mono
-                return np.frombuffer(payload, dtype=np.float32)
-                
+                # Audio mode: parse according to encoding
+                enc = getattr(self.channel, 'encoding', 0)
+                if enc == 2:
+                    # S16BE: 16-bit big-endian signed integers -> float32
+                    int16_samples = np.frombuffer(payload, dtype='>i2')
+                    return (int16_samples / 32768.0).astype(np.float32)
+                elif enc == 1:
+                    # S16LE: 16-bit little-endian signed integers -> float32
+                    int16_samples = np.frombuffer(payload, dtype='<i2')
+                    return (int16_samples / 32768.0).astype(np.float32)
+                else:
+                    # F32LE (4), F32BE (8), or default: float32
+                    if enc == 8:
+                        return np.frombuffer(payload, dtype='>f4').astype(np.float32)
+                    else:
+                        return np.frombuffer(payload, dtype=np.float32)
+
         except Exception as e:
             logger.error(f"Failed to parse payload: {e}")
             return None

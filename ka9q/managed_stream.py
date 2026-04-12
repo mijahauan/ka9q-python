@@ -123,6 +123,7 @@ class ManagedStream:
         agc_enable: int = 0,
         gain: float = 0.0,
         destination: Optional[str] = None,
+        encoding: int = 0,
         on_samples: Optional[SampleCallback] = None,
         on_stream_dropped: Optional[StreamDroppedCallback] = None,
         on_stream_restored: Optional[StreamRestoredCallback] = None,
@@ -135,7 +136,7 @@ class ManagedStream:
     ):
         """
         Initialize ManagedStream.
-        
+
         Args:
             control: RadiodControl instance for channel management
             frequency_hz: Center frequency in Hz
@@ -144,6 +145,7 @@ class ManagedStream:
             agc_enable: Enable AGC (0=off, 1=on)
             gain: Manual gain in dB (when AGC off)
             destination: RTP destination multicast address (optional)
+            encoding: Output encoding (0=none, 1=S16LE, 2=S16BE, 4=F32LE, etc.)
             on_samples: Callback(samples, quality) for sample delivery
             on_stream_dropped: Callback(reason) when stream drops
             on_stream_restored: Callback(channel) when stream is restored
@@ -161,6 +163,7 @@ class ManagedStream:
         self._agc_enable = agc_enable
         self._gain = gain
         self._destination = destination
+        self._encoding = encoding
         
         # Callbacks
         self._on_samples = on_samples
@@ -232,6 +235,7 @@ class ManagedStream:
             agc_enable=self._agc_enable,
             gain=self._gain,
             destination=self._destination,
+            encoding=self._encoding,
         )
         
         # Start the underlying stream
@@ -414,6 +418,7 @@ class ManagedStream:
                 agc_enable=self._agc_enable,
                 gain=self._gain,
                 destination=self._destination,
+                encoding=self._encoding,
                 timeout=self._restore_interval_sec * 2,  # Give it some time
             )
             
