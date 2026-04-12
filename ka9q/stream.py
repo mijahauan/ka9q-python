@@ -47,6 +47,46 @@ logger = logging.getLogger(__name__)
 SampleCallback = Callable[[np.ndarray, StreamQuality], None]
 
 
+def parse_rtp_samples(
+    payload: bytes, encoding: int, is_iq: bool
+) -> Optional[np.ndarray]:
+    """Parse RTP payload samples based on encoding.
+
+    Shared by RadiodStream and MultiStream.
+
+    Args:
+        payload: Raw RTP payload bytes (after header).
+        encoding: Channel encoding (0=none/F32LE, 1=S16LE, 2=S16BE, 4=F32LE, 8=F32BE).
+        is_iq: True for IQ (complex) mode, False for audio (real) mode.
+
+    Returns:
+        Parsed samples as np.ndarray (complex64 for IQ, float32 for audio),
+        or None on error.
+    """
+    try:
+        if is_iq:
+            floats = np.frombuffer(payload, dtype=np.float32)
+            if len(floats) % 2 != 0:
+                logger.warning(f"Odd number of floats in IQ payload: {len(floats)}")
+                return None
+            samples = floats[0::2] + 1j * floats[1::2]
+            return samples.astype(np.complex64)
+        else:
+            if encoding == 2:
+                int16_samples = np.frombuffer(payload, dtype='>i2')
+                return (int16_samples / 32768.0).astype(np.float32)
+            elif encoding == 1:
+                int16_samples = np.frombuffer(payload, dtype='<i2')
+                return (int16_samples / 32768.0).astype(np.float32)
+            elif encoding == 8:
+                return np.frombuffer(payload, dtype='>f4').astype(np.float32)
+            else:
+                return np.frombuffer(payload, dtype=np.float32)
+    except Exception as e:
+        logger.error(f"Failed to parse payload: {e}")
+        return None
+
+
 class RadiodStream:
     """
     High-level interface to a radiod IQ/audio stream.
@@ -351,37 +391,8 @@ class RadiodStream:
     
     def _parse_samples(self, payload: bytes) -> Optional[np.ndarray]:
         """Parse samples from RTP payload based on channel encoding."""
-        try:
-            if self._is_iq:
-                # IQ mode: float32 interleaved I/Q -> complex64
-                # 960 bytes = 240 floats = 120 complex samples
-                floats = np.frombuffer(payload, dtype=np.float32)
-                if len(floats) % 2 != 0:
-                    logger.warning(f"Odd number of floats in IQ payload: {len(floats)}")
-                    return None
-                samples = floats[0::2] + 1j * floats[1::2]
-                return samples.astype(np.complex64)
-            else:
-                # Audio mode: parse according to encoding
-                enc = getattr(self.channel, 'encoding', 0)
-                if enc == 2:
-                    # S16BE: 16-bit big-endian signed integers -> float32
-                    int16_samples = np.frombuffer(payload, dtype='>i2')
-                    return (int16_samples / 32768.0).astype(np.float32)
-                elif enc == 1:
-                    # S16LE: 16-bit little-endian signed integers -> float32
-                    int16_samples = np.frombuffer(payload, dtype='<i2')
-                    return (int16_samples / 32768.0).astype(np.float32)
-                else:
-                    # F32LE (4), F32BE (8), or default: float32
-                    if enc == 8:
-                        return np.frombuffer(payload, dtype='>f4').astype(np.float32)
-                    else:
-                        return np.frombuffer(payload, dtype=np.float32)
-
-        except Exception as e:
-            logger.error(f"Failed to parse payload: {e}")
-            return None
+        enc = getattr(self.channel, 'encoding', 0)
+        return parse_rtp_samples(payload, enc, self._is_iq)
     
     def _record_empty_payload(self, header: RTPHeader):
         """Record an empty payload as a gap event."""

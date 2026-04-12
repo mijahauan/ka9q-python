@@ -95,6 +95,7 @@ from .managed_stream import (
     ManagedStreamStats,
     StreamState,
 )
+from .multi_stream import MultiStream
 
 __all__ = [
     # Control
@@ -137,11 +138,14 @@ __all__ = [
     'RTPPacket',
     'ResequencerStats',
     
-    # Managed Stream (self-healing)
+    # Managed Stream (self-healing, single channel)
     'ManagedStream',
     'ManagedStreamStats',
     'StreamState',
-    
+
+    # Multi Stream (shared socket, multiple channels)
+    'MultiStream',
+
     # Utilities
     'generate_multicast_ip',
     'ChannelMonitor',
