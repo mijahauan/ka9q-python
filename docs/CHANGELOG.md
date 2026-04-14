@@ -5,6 +5,30 @@ All notable changes to ka9q-python will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.9.0] - 2026-04-14
+
+### Added - `ka9q` CLI and Textual TUI
+
+- **`ka9q` console script** (`ka9q.cli`) with `list` / `query` / `set` / `tui`
+  subcommands and a shared `SET_VERBS` vocabulary so the CLI and TUI accept
+  identical parameter names and values.
+- **Textual TUI** (`ka9q.tui`, opt-in via `pip install ka9q-python[tui]`):
+  8-panel live view (Tuning, Frontend/GPSDO, Signal/Levels, Filter/FFT,
+  Demod, Options/Squelch, Input/Status, Output/RTP) with `control`-style
+  one-letter keybindings. Updates come from a passive `listen_status()`
+  worker plus a 1 Hz `poll_status()` tick so values refresh even when the
+  channel is idle.
+- **Typed status decoder** (`ka9q.status`): `ChannelStatus`,
+  `FrontendStatus`, `PllStatus`, `FmStatus`, `SpectrumStatus`,
+  `Filter2Status`, `OpusStatus` dataclasses plus `decode_status_packet()`,
+  all re-exported from `ka9q`.
+- **New `RadiodControl` methods**: `poll_status(ssrc, timeout)` for active
+  SSRC-tagged polls, and `listen_status(callback, duration, ssrcs)` for
+  passive multicast receive.
+- **Docs**: [TUI Guide](TUI_GUIDE.md) covering launch, update cadence,
+  per-panel field reference (including where GPSDO discipline and ADC
+  overrange counters surface), keybinding table, and troubleshooting.
+
 ## [3.4.0] - 2024-12-30
 
 ### Added - Web UI Interactive Control 🎛️

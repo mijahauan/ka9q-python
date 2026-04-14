@@ -56,7 +56,7 @@ Lower-level usage (explicit control):
         )
         print(f"Created channel with SSRC: {ssrc}")
 """
-__version__ = '3.8.0'
+__version__ = '3.9.0'
 __author__ = 'Michael Hauan AC0G'
 
 from .control import RadiodControl, allocate_ssrc
