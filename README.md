@@ -259,6 +259,7 @@ It auto-skips if `../ka9q-radio` is not present, so CI environments without the 
 For detailed information, please refer to the documentation in the `docs/` directory:
 
 - **[API Reference](docs/API_REFERENCE.md)**: Full details on all classes, methods, and functions.
+- **[TUI Guide](docs/TUI_GUIDE.md)**: Launching and using the `ka9q tui` Textual terminal UI.
 - **[RTP Timing Support](docs/RTP_TIMING_SUPPORT.md)**: Guide to RTP timing and synchronization.
 - **[Architecture](docs/ARCHITECTURE.md)**: Overview of the library's design and structure.
 - **[Installation Guide](docs/INSTALLATION.md)**: Detailed installation instructions.

@@ -34,6 +34,12 @@ dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
 ]
+tui = [
+    "textual>=0.50",
+]
+
+[project.scripts]
+ka9q = "ka9q.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/mijahauan/ka9q-python"

@@ -68,6 +68,16 @@ from .discovery import (
     ChannelInfo
 )
 from .types import StatusType, Encoding, DemodType, WindowType
+from .status import (
+    FrontendStatus,
+    ChannelStatus,
+    PllStatus,
+    FmStatus,
+    SpectrumStatus,
+    Filter2Status,
+    OpusStatus,
+    decode_status_packet,
+)
 from .exceptions import Ka9qError, ConnectionError, CommandError, ValidationError
 from .rtp_recorder import (
     RTPRecorder,
@@ -114,6 +124,16 @@ __all__ = [
     'Encoding',
     'DemodType',
     'WindowType',
+
+    # Typed status
+    'FrontendStatus',
+    'ChannelStatus',
+    'PllStatus',
+    'FmStatus',
+    'SpectrumStatus',
+    'Filter2Status',
+    'OpusStatus',
+    'decode_status_packet',
     
     # Exceptions
     'Ka9qError',

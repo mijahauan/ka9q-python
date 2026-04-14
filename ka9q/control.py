@@ -2751,6 +2751,169 @@ class RadiodControl:
         logger.info(f"Setting options for SSRC {ssrc}: set=0x{set_bits:x}, clear=0x{clear_bits:x}")
         self.send_command(cmdbuffer)
     
+    # ------------------------------------------------------------------
+    # Additional setters for full `control` parity
+    # ------------------------------------------------------------------
+
+    def set_lock(self, ssrc: int, lock: bool):
+        """Lock/unlock the tuner (ignore retune commands when locked)."""
+        _validate_ssrc(ssrc)
+        cmdbuffer = bytearray()
+        cmdbuffer.append(CMD)
+        encode_int(cmdbuffer, StatusType.LOCK, 1 if lock else 0)
+        encode_int(cmdbuffer, StatusType.OUTPUT_SSRC, ssrc)
+        encode_int(cmdbuffer, StatusType.COMMAND_TAG, secrets.randbits(31))
+        encode_eol(cmdbuffer)
+        logger.info(f"Setting LOCK={lock} for SSRC {ssrc}")
+        self.send_command(cmdbuffer)
+
+    def set_pl_tone(self, ssrc: int, freq_hz: float):
+        """Set FM PL (CTCSS) tone-squelch frequency in Hz. 0 disables."""
+        _validate_ssrc(ssrc)
+        cmdbuffer = bytearray()
+        cmdbuffer.append(CMD)
+        encode_float(cmdbuffer, StatusType.PL_TONE, freq_hz)
+        encode_int(cmdbuffer, StatusType.OUTPUT_SSRC, ssrc)
+        encode_int(cmdbuffer, StatusType.COMMAND_TAG, secrets.randbits(31))
+        encode_eol(cmdbuffer)
+        logger.info(f"Setting PL tone = {freq_hz} Hz for SSRC {ssrc}")
+        self.send_command(cmdbuffer)
+
+    def set_headroom(self, ssrc: int, headroom_db: float):
+        """Set audio-level headroom (dB below full scale, typically negative)."""
+        _validate_ssrc(ssrc)
+        cmdbuffer = bytearray()
+        cmdbuffer.append(CMD)
+        encode_float(cmdbuffer, StatusType.HEADROOM, headroom_db)
+        encode_int(cmdbuffer, StatusType.OUTPUT_SSRC, ssrc)
+        encode_int(cmdbuffer, StatusType.COMMAND_TAG, secrets.randbits(31))
+        encode_eol(cmdbuffer)
+        logger.info(f"Setting headroom = {headroom_db} dB for SSRC {ssrc}")
+        self.send_command(cmdbuffer)
+
+    def set_agc_hangtime(self, ssrc: int, seconds: float):
+        """Set AGC hang time in seconds."""
+        _validate_ssrc(ssrc)
+        cmdbuffer = bytearray()
+        cmdbuffer.append(CMD)
+        encode_float(cmdbuffer, StatusType.AGC_HANGTIME, seconds)
+        encode_int(cmdbuffer, StatusType.OUTPUT_SSRC, ssrc)
+        encode_int(cmdbuffer, StatusType.COMMAND_TAG, secrets.randbits(31))
+        encode_eol(cmdbuffer)
+        self.send_command(cmdbuffer)
+
+    def set_agc_recovery_rate(self, ssrc: int, db_per_sec: float):
+        """Set AGC recovery rate in dB/sec."""
+        _validate_ssrc(ssrc)
+        cmdbuffer = bytearray()
+        cmdbuffer.append(CMD)
+        encode_float(cmdbuffer, StatusType.AGC_RECOVERY_RATE, db_per_sec)
+        encode_int(cmdbuffer, StatusType.OUTPUT_SSRC, ssrc)
+        encode_int(cmdbuffer, StatusType.COMMAND_TAG, secrets.randbits(31))
+        encode_eol(cmdbuffer)
+        self.send_command(cmdbuffer)
+
+    def set_kaiser_beta(self, ssrc: int, beta: float):
+        """Set primary filter Kaiser β."""
+        self.set_filter(ssrc, kaiser_beta=beta)
+
+    def set_description(self, ssrc: int, description: str):
+        """Set the front-end / channel description string."""
+        _validate_ssrc(ssrc)
+        cmdbuffer = bytearray()
+        cmdbuffer.append(CMD)
+        encode_string(cmdbuffer, StatusType.DESCRIPTION, description)
+        encode_int(cmdbuffer, StatusType.OUTPUT_SSRC, ssrc)
+        encode_int(cmdbuffer, StatusType.COMMAND_TAG, secrets.randbits(31))
+        encode_eol(cmdbuffer)
+        self.send_command(cmdbuffer)
+
+    # ------------------------------------------------------------------
+    # Typed status access (used by CLI / TUI)
+    # ------------------------------------------------------------------
+
+    def poll_status(self, ssrc: int, timeout: float = 2.0):
+        """Send a poll for a specific SSRC and return a typed ChannelStatus.
+
+        Unlike :meth:`tune`, this does not change channel state — it sends
+        a command containing only the SSRC + command tag, which radiod
+        answers with a full status packet.
+        """
+        import select
+        import time as _time
+        from .status import decode_status_packet
+
+        _validate_ssrc(ssrc)
+        _validate_timeout(timeout)
+
+        command_tag = secrets.randbits(31)
+        cmdbuffer = bytearray()
+        cmdbuffer.append(CMD)
+        encode_int(cmdbuffer, StatusType.COMMAND_TAG, command_tag)
+        encode_int(cmdbuffer, StatusType.OUTPUT_SSRC, ssrc)
+        encode_eol(cmdbuffer)
+
+        status_sock = self._get_or_create_status_listener()
+        start = _time.time()
+        last_send = 0.0
+        retry = 0.1
+        while _time.time() - start < timeout:
+            now = _time.time()
+            if now - last_send >= retry:
+                self.send_command(cmdbuffer)
+                last_send = now
+                retry = min(retry * 2, 1.0)
+            remaining = timeout - (now - start)
+            ready = select.select([status_sock], [], [], min(retry, remaining, 0.5))
+            if not ready[0]:
+                continue
+            try:
+                buf, _addr = status_sock.recvfrom(8192)
+            except socket.timeout:
+                continue
+            st = decode_status_packet(buf)
+            if st is None:
+                continue
+            if st.ssrc == ssrc and st.command_tag == command_tag:
+                return st
+        raise TimeoutError(f"No status response received for SSRC {ssrc} within {timeout}s")
+
+    def listen_status(self, callback, duration: Optional[float] = None,
+                      ssrcs: Optional[set] = None):
+        """Passively receive status packets and invoke ``callback(ChannelStatus)``.
+
+        radiod periodically multicasts status for every channel. This method
+        joins the status group and fans those packets out to the caller,
+        optionally filtering by SSRC. Blocks for ``duration`` seconds, or
+        indefinitely if None.
+        """
+        import select
+        import time as _time
+        from .status import decode_status_packet
+
+        status_sock = self._get_or_create_status_listener()
+        start = _time.time()
+        while True:
+            if duration is not None and _time.time() - start >= duration:
+                return
+            remaining = None if duration is None else max(0.0, duration - (_time.time() - start))
+            ready = select.select([status_sock], [], [], 0.5 if remaining is None else min(0.5, remaining))
+            if not ready[0]:
+                continue
+            try:
+                buf, _addr = status_sock.recvfrom(8192)
+            except socket.timeout:
+                continue
+            st = decode_status_packet(buf)
+            if st is None or st.ssrc is None:
+                continue
+            if ssrcs is not None and st.ssrc not in ssrcs:
+                continue
+            try:
+                callback(st)
+            except Exception as exc:
+                logger.warning(f"listen_status callback raised: {exc}")
+
     def close(self):
         """
         Close all sockets with proper error handling
