@@ -2,7 +2,9 @@
 
 ## Overview
 
-ka9q-python v2.4.0+ now decodes and exposes the timing fields `GPS_TIME` and `RTP_TIMESNAP` from radiod status packets, enabling precise RTP timestamp-to-wall-clock synchronization.
+`ka9q-python` decodes the `GPS_TIME` and `RTP_TIMESNAP` fields that radiod publishes in its status stream. Together they let you convert any RTP timestamp in a packet header into a sample-accurate Unix wallclock time — the same calculation `pcmrecord.c` uses in ka9q-radio.
+
+The helper `rtp_to_wallclock()` is exported from the top-level `ka9q` package; you rarely need to implement the formula yourself.
 
 ## Background
 
@@ -43,69 +45,46 @@ for ssrc, channel in channels.items():
 
 ### Converting RTP Timestamp to Wall Clock
 
-Use this formula (from `pcmrecord.c`):
+Use the exported `rtp_to_wallclock()` helper:
 
 ```python
 import time
+from ka9q import discover_channels, parse_rtp_header, rtp_to_wallclock
 
-def rtp_to_wallclock(rtp_timestamp, channel):
-    """
-    Convert RTP timestamp to Unix wall-clock time
-    
-    Args:
-        rtp_timestamp: RTP timestamp from packet header
-        channel: ChannelInfo with gps_time, rtp_timesnap, sample_rate
-    
-    Returns:
-        Unix timestamp (seconds since 1970-01-01 00:00:00 UTC)
-    """
-    # Constants from radiod
-    GPS_UTC_OFFSET = 315964800  # GPS epoch (1980-01-06) - Unix epoch (1970-01-01)
-    UNIX_EPOCH = 2208988800     # Unix epoch in NTP seconds
-    BILLION = 1_000_000_000
-    
-    # Convert GPS nanoseconds to Unix time
-    sender_time = channel.gps_time + BILLION * GPS_UTC_OFFSET
-    
-    # Add offset from RTP timestamp difference
-    rtp_delta = int(rtp_timestamp) - int(channel.rtp_timesnap)
-    time_offset = BILLION * rtp_delta // channel.sample_rate
-    
-    wall_time_ns = sender_time + time_offset
-    
-    # Convert to Unix seconds
-    return wall_time_ns / BILLION
+channels = discover_channels("radiod.local")
+channel = channels[14074000]
 
+data = receive_rtp_packet()                  # your socket read
+hdr  = parse_rtp_header(data)
 
-# Example usage with RTP packet
-from ka9q.rtp import parse_rtp_header
-
-data = receive_rtp_packet()
-rtp_header = parse_rtp_header(data)
-
-timestamp = rtp_to_wallclock(rtp_header.timestamp, channel)
-print(f"Packet received at: {time.ctime(timestamp)}")
+wall = rtp_to_wallclock(hdr.timestamp, channel)
+print(f"Packet received at: {time.ctime(wall)}")
 ```
 
-### Status Decoder
-
-The timing fields are also available when listening to status packets directly:
+`RTPRecorder` passes this wallclock value into its `on_packet` callback automatically, so most users never call the helper directly:
 
 ```python
-from ka9q import RadiodControl
+from ka9q import RTPRecorder
 
-control = RadiodControl("radiod.local")
+def handle(hdr, payload, wallclock):
+    ...
 
-# Poll for status
-status = control.poll_status(ssrc=14074000)
-
-if 'gps_time' in status and 'rtp_timesnap' in status:
-    print(f"GPS Time: {status['gps_time']} ns")
-    print(f"RTP Timesnap: {status['rtp_timesnap']}")
-    print(f"Sample Rate: {status['sample_rate']} Hz")
-else:
-    print("Timing fields not available")
+recorder = RTPRecorder(channel=channel, on_packet=handle)
 ```
+
+### Typed status
+
+When you want to read the timing fields out of a status packet directly (rather than at discovery time), use `decode_status_packet()`:
+
+```python
+from ka9q import decode_status_packet
+
+status = decode_status_packet(raw_bytes)   # raw_bytes from the status multicast
+print(status.ssrc, status.frequency, status.sample_rate)
+# gps_time / rtp_timesnap are also available as typed fields on ChannelStatus
+```
+
+See [API_REFERENCE.md](API_REFERENCE.md) for the full `ChannelStatus` field list.
 
 ## Implementation Details
 
@@ -164,10 +143,3 @@ Where:
 - `time_snap` = RTP_TIMESNAP (RTP timestamp when GPS_TIME was captured)
 - `samprate` = OUTPUT_SAMPRATE (channel sample rate)
 
-## Version History
-
-- **v2.4.0** - Added GPS_TIME and RTP_TIMESNAP decoding
-  - `decode_int64()` function for 64-bit GPS time
-  - Status decoder updated to capture both fields
-  - `ChannelInfo` extended with optional timing fields
-  - Example test script added

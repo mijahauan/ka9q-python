@@ -1,31 +1,30 @@
-# Architecture - ka9q-python
+# Architecture
 
-This document describes the internal architecture, design decisions, and protocol implementation of ka9q-python.
+Internal design of ka9q-python: module layout, abstraction layers,
+protocol, threading, and resource management.
 
----
-
-## Table of Contents
-
-1. [Overview](#overview)
-2. [Module Structure](#module-structure)
-3. [Protocol Implementation](#protocol-implementation)
-4. [Threading Model](#threading-model)
-5. [Error Handling Strategy](#error-handling-strategy)
-6. [Network Operations](#network-operations)
-7. [Resource Management](#resource-management)
-8. [Design Principles](#design-principles)
+For a task-oriented view of the library see [RECIPES.md](RECIPES.md).
+For the CLI/TUI see [CLI_GUIDE.md](CLI_GUIDE.md) and
+[TUI_GUIDE.md](TUI_GUIDE.md).
 
 ---
 
 ## Overview
 
-ka9q-python is a pure Python library for controlling ka9q-radio channels using radiod's TLV (Type-Length-Value) command protocol. The library is designed to be:
+ka9q-python is a pure-Python library that speaks ka9q-radio's TLV
+(Type-Length-Value) multicast UDP protocol. It provides:
 
-- **General-purpose**: No application-specific assumptions
-- **Robust**: Comprehensive error handling and validation
-- **Thread-safe**: Safe for multi-threaded applications
-- **Cross-platform**: Works on Linux, macOS, and Windows
-- **Production-ready**: Suitable for long-running applications
+- **Control**: a single `RadiodControl` that implements every
+  command verb radiod accepts.
+- **Discovery**: mDNS service browsing and channel enumeration via
+  multicast status packets.
+- **Typed status**: dataclass decoders for the status wire format.
+- **Streaming consumers**: four progressively higher-level patterns
+  for consuming RTP audio.
+- **Operator tools**: a console CLI (`ka9q`) and a Textual TUI.
+
+Design goals: general-purpose (no application assumptions),
+thread-safe, cross-platform, no C extensions.
 
 ---
 
@@ -33,502 +32,332 @@ ka9q-python is a pure Python library for controlling ka9q-radio channels using r
 
 ```
 ka9q/
-├── __init__.py       # Package exports and version
-├── control.py        # RadiodControl class and TLV encoding
-├── discovery.py      # Channel discovery functions
-├── types.py          # Protocol constants (StatusType, Encoding)
-├── exceptions.py     # Custom exception classes
-└── utils.py          # Shared utilities (mDNS resolution)
+├── __init__.py         Package exports and version
+├── control.py          RadiodControl — the central command class
+├── discovery.py        discover_channels, discover_radiod_services, ChannelInfo
+├── monitor.py          ChannelMonitor — restart detection + callbacks
+├── addressing.py       Deterministic multicast IP and SSRC generation
+├── utils.py            Cross-platform mDNS resolution, multicast socket setup
+├── types.py            StatusType enum (110+), Encoding, DemodType, WindowType
+├── status.py           Typed status decoders (ChannelStatus, FrontendStatus, …)
+├── exceptions.py       Ka9qError hierarchy
+├── compat.py           ka9q-radio commit compatibility marker
+├── rtp_recorder.py     RTPRecorder — raw packet capture with GPS/RTP timestamps
+├── resequencer.py      PacketResequencer — RTP reordering, gap detection
+├── stream_quality.py   StreamQuality, GapEvent, GapSource
+├── stream.py           RadiodStream — continuous sample delivery
+├── managed_stream.py   ManagedStream — self-healing single-channel wrapper
+├── multi_stream.py     MultiStream — shared-socket multi-SSRC receiver
+├── pps_calibrator.py   L6 BPSK PPS chain-delay calibration
+├── cli.py              `ka9q` console script (list / query / set / tui)
+└── tui.py              Textual TUI panels
 ```
-
-### Module Responsibilities
-
-#### `control.py` - Command and Control
-- **Purpose**: Send TLV commands to radiod, manage connections
-- **Key Classes**: `RadiodControl`
-- **Key Functions**: 
-  - TLV encoding: `encode_int64()`, `encode_double()`, `encode_float()`, `encode_string()`
-  - TLV decoding: `decode_int()`, `decode_double()`, `decode_float()`, `decode_string()`
-  - Validation: `_validate_ssrc()`, `_validate_frequency()`, etc.
-- **Network**: UDP multicast for sending commands and receiving status
-
-#### `discovery.py` - Service Discovery
-- **Purpose**: Discover active channels and radiod services
-- **Key Functions**:
-  - `discover_channels()` - Automatic discovery (native + fallback)
-  - `discover_channels_native()` - Pure Python discovery
-  - `discover_channels_via_control()` - Use ka9q-radio's `control` utility
-  - `discover_radiod_services()` - Find radiod instances via mDNS
-- **Network**: Listens to multicast status stream
-
-#### `types.py` - Protocol Constants
-- **Purpose**: Define all StatusType enum values and encoding constants
-- **Source**: Mirrors ka9q-radio/src/status.h exactly
-- **Contains**: 110+ StatusType constants, Encoding types
-
-#### `exceptions.py` - Error Handling
-- **Purpose**: Define custom exception hierarchy
-- **Exceptions**:
-  - `Ka9qError` (base)
-  - `ConnectionError` (network/connection issues)
-  - `CommandError` (command sending failures)
-  - `ValidationError` (invalid parameters)
-  - `DiscoveryError` (discovery failures)
-
-#### `utils.py` - Shared Utilities
-- **Purpose**: Common functions used across modules
-- **Key Functions**:
-  - `resolve_multicast_address()` - Cross-platform mDNS resolution
-  - `create_multicast_socket()` - Configure multicast UDP sockets
-  - `validate_multicast_address()` - Validate multicast IP ranges
 
 ---
 
-## Protocol Implementation
+## Abstraction Layers
 
-### TLV (Type-Length-Value) Format
+The library exposes four consumer patterns for RTP audio, in order of
+increasing abstraction:
 
-All communication with radiod uses TLV encoding:
+### 1. `RTPRecorder` ([rtp_recorder.py](../ka9q/rtp_recorder.py))
+
+Low-level raw packet capture with precise GPS/RTP timestamps. No
+resequencing, no gap filling. Use this when timing fidelity matters
+more than sample continuity — WSPR, scientific measurement,
+propagation studies. Exposes `RTPHeader`, `RecordingMetrics`,
+`parse_rtp_header()`, `rtp_to_wallclock()`.
+
+### 2. `RadiodStream` ([stream.py](../ka9q/stream.py))
+
+Mid-level continuous sample delivery with automatic gap filling.
+Wraps `PacketResequencer` ([resequencer.py](../ka9q/resequencer.py))
+to handle out-of-order RTP. Hands each batch to an
+`on_samples(samples, quality)` callback. Does **not** heal radiod
+restarts — a restart produces a lasting silence.
+
+### 3. `ManagedStream` ([managed_stream.py](../ka9q/managed_stream.py))
+
+High-level self-healing wrapper around `RadiodStream`. A background
+health thread detects silence beyond `drop_timeout_sec` and calls
+`ensure_channel()` to re-provision the channel. Fires
+`on_stream_dropped` / `on_stream_restored` callbacks. Best for one
+or two long-running channels.
+
+### 4. `MultiStream` ([multi_stream.py](../ka9q/multi_stream.py))
+
+Shared-socket multi-SSRC receiver. One UDP socket, one receive
+thread, N per-channel `on_samples` callbacks demultiplexed by SSRC.
+Each slot has its own resequencer and quality block; the health
+thread heals each slot independently. Scales to dozens of channels
+on the same multicast group with O(1) socket resources. Production
+users: wspr-recorder, psk-recorder, hf-timestd.
+
+See [MULTI_STREAM.md](MULTI_STREAM.md) for depth.
+
+---
+
+## Core: `RadiodControl`
+
+[`control.py`](../ka9q/control.py) (~2800 lines) is the central class.
+It implements the TLV command protocol and all setter verbs.
+
+- 110+ StatusType constants in [types.py](../ka9q/types.py),
+  mirroring `status.h` in ka9q-radio.
+- TLV encoders: `encode_int64`, `encode_double`, `encode_float`,
+  `encode_string`, `encode_eol`.
+- TLV decoders: `decode_int`, `decode_double`, `decode_float`,
+  `decode_string`, `decode_socket`.
+- Input validation at every public API boundary.
+- Deterministic SSRC generation via
+  [addressing.py](../ka9q/addressing.py) (`allocate_ssrc`,
+  `generate_multicast_ip`).
+
+Key high-level method: `ensure_channel(frequency_hz, preset,
+sample_rate, ...)` — idempotent, verifies the channel is alive before
+returning its `ChannelInfo`. This is what `ManagedStream` and
+`MultiStream` call internally.
+
+---
+
+## Typed Status Decoders
+
+[`status.py`](../ka9q/status.py) provides dataclass decoders for
+radiod's status packets:
+
+| Class | Purpose |
+|---|---|
+| `FrontendStatus` | SDR / A-D / GPSDO fields (input_samprate, ad_bits_per_sample, isreal, lna_gain, mixer_gain, calibrate, rf_agc, if_power, …). Derived properties: `calibrate_ppm`, `gpsdo_reference_hz`, `input_power_dbm`. |
+| `PllStatus`, `FmStatus`, `SpectrumStatus`, `Filter2Status`, `OpusStatus` | Per-demod optional sub-blocks. |
+| `ChannelStatus` | Top-level channel status. Embeds `FrontendStatus` as `.frontend` and demod-specific blocks. Helpers: `to_dict()`, `get_field("dotted.path")`, `field_names()`. |
+| `decode_status_packet(buf)` | Parse raw multicast bytes → `ChannelStatus`. |
+
+`ChannelStatus.get_field()` is what the CLI's `--field` flag drives.
+
+---
+
+## Discovery
+
+[`discovery.py`](../ka9q/discovery.py) has two responsibilities:
+
+- **Service discovery** — `discover_radiod_services()` shells out to
+  `avahi-browse -t _ka9q-ctl._udp`, decodes escape sequences, and
+  returns deduplicated `{name, address}` dicts.
+- **Channel discovery** — `discover_channels()` listens to a host's
+  status multicast group for a few seconds, decodes each packet into
+  a `ChannelInfo`, and returns an SSRC-keyed dict. Has two backends:
+  `discover_channels_native()` (pure Python, preferred) and
+  `discover_channels_via_control()` (shells out to the `control`
+  utility from ka9q-radio).
+
+Both are used by the CLI (`ka9q list`) and the TUI pickers.
+
+---
+
+## CLI & TUI
+
+- [`cli.py`](../ka9q/cli.py) — `ka9q` console script. Subcommands
+  `list`, `query`, `set`, `tui`. Every `set` verb maps to a
+  `RadiodControl` setter via the `SET_VERBS` table. Registered as
+  an entry point in `pyproject.toml`.
+- [`tui.py`](../ka9q/tui.py) — Textual application. Panels for
+  tuning, frontend/GPSDO, signal, filter, demod, input, output,
+  options. Interactive pickers (`RadiodPickerScreen`,
+  `SsrcPickerScreen`) use the same discovery functions the CLI uses.
+  Optional dependency (`pip install ka9q-python[tui]`).
+
+---
+
+## Monitor and Calibrator
+
+- [`monitor.py`](../ka9q/monitor.py) — `ChannelMonitor` watches
+  status packets to detect radiod restarts and fire user callbacks.
+- [`pps_calibrator.py`](../ka9q/pps_calibrator.py) — L6 BPSK PPS
+  chain-delay calibration. Classes: `BpskPpsCalibrator`,
+  `PpsCalibrationResult`, `NotchFilter500Hz`. Specialized for
+  WB6CXC-style injector-based cable-delay measurement.
+
+---
+
+## Protocol
+
+### TLV wire format
 
 ```
-[Type: 1 byte][Length: 1-2 bytes][Value: variable]
+[Type: 1 byte][Length: 1–2 bytes][Value: variable]
 ```
 
-#### Type Byte
-- Identifies the parameter (e.g., `StatusType.RADIO_FREQUENCY = 33`)
-- Defined in `types.py`, must match ka9q-radio/status.h
+- **Type**: `StatusType` enum value.
+- **Length**: single byte if <128; two bytes (`0x80|hi`, `lo`) if
+  larger. Length 0 is a valid "zero value" encoding (compressed).
+- **Value**:
+  - Integers: big-endian, leading zeros stripped.
+  - Floats: IEEE 754 big-endian (4 or 8 bytes).
+  - Strings: UTF-8 length-prefixed.
 
-#### Length Encoding
-- **Single-byte** (length < 128): Length value directly
-- **Multi-byte** (length >= 128): `0x80 | high_byte`, then `low_byte`
-- **Zero length**: Used for zero values (compressed encoding)
+Every packet ends with `StatusType.EOL = 0`.
 
-#### Value Encoding
+### Packet framing
 
-**Integers (64-bit)**:
-- Big-endian encoding
-- Leading zeros stripped (compressed)
-- Example: `12345` → `[type][2][0x30, 0x39]`
+- Command packet: `[CMD=1][params…][EOL]`
+- Status packet: `[STATUS=0][params…][EOL]`
 
-**Floats (IEEE 754)**:
-- **float32**: 4 bytes, big-endian
-- **float64**: 8 bytes, big-endian
-- Encoded as integers after packing to IEEE 754 format
+Status packets are multicast by radiod periodically (every ~1–2 s)
+and in response to commands (matched by `COMMAND_TAG`).
 
-**Strings (UTF-8)**:
-- UTF-8 encoded bytes
-- Length-prefixed
-- Example: `"usb"` → `[type][3][0x75, 0x73, 0x62]`
+### Addressing
 
-**EOL Marker**:
-- Every command packet ends with `StatusType.EOL = 0`
-- Signals end of parameter list
-
-### Command Packet Structure
-
-```
-[CMD_TYPE: 1][param1_type][param1_len][param1_data]...[EOL]
-```
-
-Example command to set frequency:
-```python
-cmdbuffer = bytearray()
-cmdbuffer.append(CMD)  # Command packet type = 1
-encode_double(cmdbuffer, StatusType.RADIO_FREQUENCY, 14.074e6)
-encode_int(cmdbuffer, StatusType.OUTPUT_SSRC, 14074000)
-encode_int(cmdbuffer, StatusType.COMMAND_TAG, 12345)
-encode_eol(cmdbuffer)
-# Send via UDP multicast
-```
-
-### Status Response Structure
-
-```
-[STATUS_TYPE: 0][param1_type][param1_len][param1_data]...[EOL]
-```
-
-Radiod sends status responses:
-- As multicast UDP packets
-- Periodically (every few seconds)
-- In response to commands (matched by COMMAND_TAG)
+- Transport: UDP multicast, standard radiod control/status port
+  `5006`. RTP audio lives on separate per-group addresses.
+- mDNS resolution via `avahi-resolve` (Linux), `dns-sd` (macOS), or
+  `getaddrinfo()` fallback. See [`utils.py`](../ka9q/utils.py).
+- Deterministic SSRCs: `allocate_ssrc()` hashes channel parameters
+  so identical requests converge to the same SSRC across restarts.
 
 ---
 
 ## Threading Model
 
-### Thread Safety Guarantees
+### Locks
 
-**RadiodControl** is thread-safe for:
-- ✅ All public methods (`create_channel()`, `set_frequency()`, `tune()`, etc.)
-- ✅ Sending commands (protected by `_socket_lock`)
-- ✅ Status listening (protected by `_status_sock_lock`)
-- ✅ Resource cleanup (`close()`)
-
-### Lock Hierarchy
+`RadiodControl` serializes network I/O with reentrant locks
+(`threading.RLock`):
 
 ```
-_socket_lock (RLock)
-└── Protects: self.socket, send operations
-
-_status_sock_lock (RLock)  
-└── Protects: self._status_sock, tune() operations
+_socket_lock       — protects control socket, send operations
+_status_sock_lock  — protects status socket, tune() read path
 ```
 
-**Lock Type**: `threading.RLock()` (reentrant)
-- Allows same thread to acquire lock multiple times
-- Prevents deadlocks in recursive calls
+`RLock` allows a thread holding the lock to re-enter; prevents
+deadlock in nested calls (e.g. a setter that internally calls
+`poll_status()`).
 
-### Concurrent Usage Pattern
+### Concurrent use
 
 ```python
-control = RadiodControl("radiod.local")
-
-def worker(frequency):
-    # Safe from multiple threads
-    control.set_frequency(ssrc=10000, frequency_hz=frequency)
-
-threads = [Thread(target=worker, args=(f,)) for f in frequencies]
-for t in threads:
-    t.start()
-for t in threads:
-    t.join()
-
-control.close()
+with RadiodControl("radiod.local") as control:
+    def worker(freq):
+        control.set_frequency(ssrc=10000, frequency_hz=freq)
+    threads = [Thread(target=worker, args=(f,)) for f in frequencies]
+    for t in threads: t.start()
+    for t in threads: t.join()
 ```
+
+Safe: each `set_frequency` acquires `_socket_lock`, sends its TLV
+packet atomically, releases.
+
+### Stream threads
+
+- `ManagedStream`: one health thread, one RTP receive thread.
+- `MultiStream`: one health thread, one RTP receive thread total
+  (shared across all slots).
+- `RadiodStream`: one RTP receive thread.
+
+All are daemon threads; `stop()` joins with a 5 s timeout.
 
 ---
 
-## Error Handling Strategy
+## Error Handling
 
-### Validation Philosophy
-
-**Fail Fast**: Validate inputs at public API boundaries before any network operations.
-
-```python
-def create_channel(self, ssrc, frequency_hz, ...):
-    # Validate ALL inputs first
-    _validate_ssrc(ssrc)
-    _validate_frequency(frequency_hz)
-    # ... then proceed with operations
-```
-
-### Exception Hierarchy
+### Exception hierarchy
 
 ```
 Exception
-└── Ka9qError (base for all ka9q errors)
-    ├── ConnectionError (network/connection)
-    ├── CommandError (sending failures)
-    ├── ValidationError (invalid parameters)
-    └── DiscoveryError (discovery failures)
+└── Ka9qError
+    ├── ConnectionError
+    ├── CommandError
+    ├── ValidationError
+    └── DiscoveryError
 ```
 
-### Exception Chaining
+### Philosophy
 
-Always preserve original exceptions:
-
-```python
-except socket.error as e:
-    raise CommandError(f"Socket error: {e}") from e
-    # ^^^ 'from e' preserves stack trace
-```
-
-### Error Recovery
-
-**Retry Logic** (for transient failures):
-- Network operations retry up to 3 times by default
-- Exponential backoff: 0.1s → 0.2s → 0.4s
-- Configurable via `send_command(max_retries=N)`
-
-**Resource Cleanup** (always safe):
-- `close()` method handles all cleanup errors
-- Safe to call multiple times
-- Context manager ensures cleanup even on exceptions
+- **Validate early**: every public `RadiodControl` method checks
+  inputs (SSRC range, frequency sign, preset whitelist) before
+  touching the network.
+- **Fail fast** with a typed exception, not a generic one.
+- **Preserve context**: `raise CommandError(...) from e` — the
+  original traceback is kept.
+- **Retry transient network errors**: `send_command()` retries up
+  to `max_retries` times with exponential backoff (0.1, 0.2, 0.4 s).
 
 ---
 
 ## Network Operations
 
-### Multicast UDP
+### Control socket (send)
 
-**Protocol**: UDP (connectionless)
-**Multicast Group**: 239.x.x.x (configurable per radiod instance)
-**Port**: 5006 (standard radiod control/status port)
-
-### Address Resolution
-
-**Cross-platform mDNS**:
-1. Check if already IP address (no resolution needed)
-2. Try `avahi-resolve` (Linux)
-3. Try `dns-sd` (macOS)
-4. Fallback to `getaddrinfo()` (works everywhere)
-
-**Timeout**: 5 seconds default, configurable
-
-### Socket Configuration
-
-**Control Socket** (for sending commands):
 ```python
-sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, inet_aton('0.0.0.0'))
-sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
-sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_LOOP, 1)
-sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
+sock = socket.socket(AF_INET, SOCK_DGRAM)
+sock.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
+sock.setsockopt(IPPROTO_IP, IP_MULTICAST_IF, inet_aton('0.0.0.0'))
+sock.setsockopt(IPPROTO_IP, IP_ADD_MEMBERSHIP, mreq)
+sock.setsockopt(IPPROTO_IP, IP_MULTICAST_LOOP, 1)
+sock.setsockopt(IPPROTO_IP, IP_MULTICAST_TTL, 2)
 ```
 
-**Status Socket** (for receiving responses):
+### Status socket (receive)
+
 ```python
-sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)  # if available
-sock.bind(('0.0.0.0', 5006))  # CRITICAL: must bind to multicast port
-sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
-sock.settimeout(0.1)  # For polling
+sock.bind(('0.0.0.0', 5006))   # must bind to the multicast port
+sock.setsockopt(IPPROTO_IP, IP_ADD_MEMBERSHIP, mreq)
+sock.settimeout(0.1)
 ```
 
-### Performance Optimizations
+### Multi-homed hosts
 
-**Socket Reuse**:
-- Status listener socket cached in `tune()` method
-- Avoids create/destroy overhead (~20-30ms saved per call)
-- Prevents socket exhaustion in loops
-
-**Exponential Backoff**:
-- Command retries use exponential backoff
-- Reduces network spam
-- Improves reliability on congested networks
+`interface=` on `RadiodControl` and the discovery functions maps to
+`IP_ADD_MEMBERSHIP`'s interface field. On single-homed hosts,
+`0.0.0.0` (INADDR_ANY) is fine.
 
 ---
 
 ## Resource Management
 
-### Lifecycle
+### Context manager
 
-```
-RadiodControl("radiod.local")
-    ↓
-__init__() → _connect() → socket created
-    ↓
-send commands... (multiple operations)
-    ↓
-close() or __exit__() → sockets closed
-```
-
-### Context Manager Pattern
-
-**Recommended Usage**:
 ```python
 with RadiodControl("radiod.local") as control:
-    control.create_channel(...)
-# Automatic cleanup, guaranteed
+    ...
+# sockets closed, even on exception
 ```
 
-**Implementation**:
-```python
-def __enter__(self):
-    return self
+### Robust `close()`
 
-def __exit__(self, exc_type, exc_val, exc_tb):
-    self.close()
-    return False  # Don't suppress exceptions
+`close()` is idempotent: safe to call multiple times, handles
+per-socket cleanup errors, logs warnings rather than raising, sets
+socket attributes to `None` in `finally` blocks.
+
+### Stream lifecycle
+
+Every streaming class (`RadiodStream`, `ManagedStream`, `MultiStream`,
+`RTPRecorder`) follows the same shape:
+
+```
+__init__ → start() → (threads run) → stop() → (threads join, sockets closed)
 ```
 
-### Socket Cleanup
-
-**Robust close()** method:
-- Handles errors during cleanup
-- Safe to call multiple times
-- Sets sockets to None in finally blocks
-- Logs warnings for any failures
-
-```python
-def close(self):
-    errors = []
-    
-    if self.socket:
-        try:
-            self.socket.close()
-        except Exception as e:
-            errors.append(f"control: {e}")
-        finally:
-            self.socket = None
-    
-    # Similar for _status_sock...
-    
-    if errors:
-        logger.warning(f"Cleanup errors: {'; '.join(errors)}")
-```
+`stop()` is idempotent and joins with a 5 s timeout.
 
 ---
 
-## Design Principles
+## Debugging
 
-### 1. **No Application Assumptions**
-
-The library makes **zero** assumptions about:
-- What you're recording
-- Where you're storing data
-- What sample rates you need
-- What frequencies you monitor
-- Your data format or encoding
-
-**Example**: Unlike application-specific libraries, we don't have a "record FT8" function. Instead, we provide primitives:
-```python
-control.create_channel(ssrc=14074000, frequency_hz=14.074e6, preset="usb")
-# YOU decide what to do with the RTP stream
-```
-
-### 2. **Defensive Programming**
-
-- **Validate early**: Check parameters before network operations
-- **Fail fast**: Raise clear errors immediately
-- **Preserve context**: Use exception chaining
-- **Guard resources**: Always cleanup, even on errors
-
-### 3. **Composability**
-
-Functions are designed to be composed:
-```python
-# Discover channels
-channels = discover_channels("radiod.local")
-
-# Create control instance
-with RadiodControl("radiod.local") as control:
-    # Tune to specific frequency
-    status = control.tune(ssrc=10000, frequency_hz=14.074e6)
-    
-    # Adjust based on status
-    if status['snr'] < 10:
-        control.set_gain(ssrc=10000, gain_db=20)
-```
-
-### 4. **Explicit is Better Than Implicit**
-
-- Method names are clear: `create_channel()`, not `setup()`
-- Parameters are explicit: `frequency_hz`, not `freq`
-- Errors are specific: `ValidationError`, not generic `Exception`
-- Return values are documented: `Dict[int, ChannelInfo]`
-
-### 5. **Production-First**
-
-Designed for production use from day 1:
-- Thread-safe by default
-- Robust error handling
-- Resource leak prevention
-- Network retry logic
-- Comprehensive logging
-- Context manager support
-
----
-
-## Protocol Compatibility
-
-### ka9q-radio Version
-
-**Based on**: ka9q-radio status.h protocol
-**Compatible with**: ka9q-radio v1.x and v2.x
-**Constants**: All 110+ StatusType values match status.h exactly
-
-### Future Compatibility
-
-**Adding new parameters**:
-1. Update `types.py` with new StatusType constants
-2. Add encode/decode if needed (rare)
-3. Add setter method if convenient
-
-**Protocol changes**:
-- TLV format is stable and unlikely to change
-- New StatusType values are backward compatible
-- Deprecated values remain for compatibility
-
----
-
-## Performance Characteristics
-
-### Typical Operation Times
-
-| Operation | Time | Notes |
-|-----------|------|-------|
-| `create_channel()` | 1-2 ms | Single UDP packet |
-| `set_frequency()` | 1-2 ms | Single UDP packet |
-| `tune()` | 50-500 ms | Waits for status response |
-| `discover_channels()` | 2-5 sec | Listens for status packets |
-| `resolve_multicast_address()` | 10-100 ms | Varies by method |
-
-### Memory Footprint
-
-- **RadiodControl instance**: ~2 KB
-- **Per command buffer**: ~100 bytes
-- **Per status response**: ~1-8 KB
-- **Socket overhead**: ~8 KB per socket
-
-### Network Bandwidth
-
-- **Command packet**: 20-100 bytes
-- **Status packet**: 500-4000 bytes
-- **Frequency**: Commands as needed, status every 1-5 seconds
-
----
-
-## Debugging Tips
-
-### Enable Debug Logging
+Enable hex-dump logging of all TLV traffic:
 
 ```python
 import logging
 logging.basicConfig(level=logging.DEBUG)
 ```
 
-### View Hex Dumps
+Common issues:
 
-```python
-# control.py logs hex dumps of all sent commands
-# DEBUG: Sending 23 bytes: 01 21 08 41 4c 40 00 00 00 00 00 12 04 00 d6 f2 d0 ...
-```
-
-### Common Issues
-
-**Problem**: "Failed to resolve address"
-- Check mDNS is working: `avahi-resolve -n radiod.local`
-- Try IP address directly instead of .local name
-
-**Problem**: "Socket error: Permission denied"
-- Multicast may require sudo on some systems
-- Check firewall allows UDP port 5006
-
-**Problem**: "ValidationError: Invalid SSRC"
-- SSRC must be 0-4294967295 (32-bit unsigned)
-- Convention: use frequency in Hz as SSRC
+- **"Failed to resolve address"** — `avahi-resolve -n host.local`
+  to verify mDNS; try the IP directly.
+- **"Permission denied" on multicast** — firewall; verify UDP/5006.
+- **No status packets received** — `interface=` may be needed on
+  multi-homed hosts; see [GETTING_STARTED.md](GETTING_STARTED.md).
 
 ---
 
-## Testing Strategy
-
-### Unit Tests
-- Mock network operations
-- Test encoding/decoding
-- Validate error handling
-
-### Integration Tests
-- Require live radiod instance
-- Test actual channel creation
-- Verify status responses
-
-### Performance Tests
-- Socket reuse efficiency
-- Retry logic behavior
-- Resource leak detection
-
----
-
-## Version History
-
-- **v1.0.0**: Initial release
-- **v2.0.0**: Added tune() method, comprehensive testing
-- **v2.1.0**: Input validation, thread safety, retry logic, context manager support
-
----
-
-*For API documentation, see [API_REFERENCE.md](API_REFERENCE.md)*  
-*For user guide, see [README.md](README.md)*
+*API reference: [API_REFERENCE.md](API_REFERENCE.md).*
