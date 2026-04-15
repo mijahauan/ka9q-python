@@ -18,8 +18,10 @@ try:
     from textual.app import App, ComposeResult
     from textual.binding import Binding
     from textual.containers import Grid, Horizontal, Vertical
-    from textual.screen import ModalScreen
-    from textual.widgets import Footer, Header, Input, Label, Static
+    from textual.screen import ModalScreen, Screen
+    from textual.widgets import (
+        DataTable, Footer, Header, Input, Label, ListItem, ListView, Static,
+    )
     from textual.reactive import reactive
 except ImportError as exc:  # pragma: no cover
     raise ImportError(
@@ -27,6 +29,9 @@ except ImportError as exc:  # pragma: no cover
     ) from exc
 
 from .control import RadiodControl
+from .discovery import (
+    ChannelInfo, discover_channels, discover_radiod_services,
+)
 from .status import ChannelStatus
 from .types import DemodType
 
@@ -314,6 +319,184 @@ class PromptModal(ModalScreen[Optional[str]]):
 
 
 # ---------------------------------------------------------------------------
+# Picker screens
+# ---------------------------------------------------------------------------
+
+class RadiodPickerScreen(Screen[Optional[str]]):
+    """Discovers radiod services via mDNS and lets the user pick one."""
+
+    DEFAULT_CSS = """
+    RadiodPickerScreen { align: center middle; }
+    RadiodPickerScreen > Vertical {
+        background: $panel; border: thick $accent;
+        padding: 1 2; width: 80; height: 20;
+    }
+    RadiodPickerScreen ListView { height: 1fr; }
+    """
+    BINDINGS = [
+        Binding("r", "rescan", "Rescan", priority=True),
+        Binding("escape", "cancel", "Cancel", priority=True),
+        Binding("q", "cancel", "Quit", priority=True),
+        Binding("ctrl+c", "force_quit", "Quit", priority=True, show=False),
+    ]
+
+    def action_force_quit(self) -> None:
+        self.app.exit()
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Label("Select a radiod instance  (Enter=pick  r=rescan  q/Esc=quit)")
+            yield Static("Discovering…", id="rp-status")
+            yield ListView(id="rp-list")
+
+    def on_mount(self) -> None:
+        self.run_worker(self._scan, thread=True, exclusive=True)
+
+    def _scan(self) -> None:
+        try:
+            services = discover_radiod_services(timeout=5.0)
+        except Exception as exc:  # noqa: BLE001
+            self.app.call_from_thread(self._show_error, str(exc))
+            return
+        self.app.call_from_thread(self._populate, services)
+
+    def _show_error(self, msg: str) -> None:
+        self.query_one("#rp-status", Static).update(f"Error: {msg}")
+
+    def _populate(self, services: list) -> None:
+        lv = self.query_one("#rp-list", ListView)
+        lv.clear()
+        if not services:
+            self.query_one("#rp-status", Static).update(
+                "No radiod services found via mDNS. Press r to rescan or Esc to quit."
+            )
+            return
+        self.query_one("#rp-status", Static).update(
+            f"Found {len(services)} service(s)."
+        )
+        self._services = services
+        for svc in services:
+            lv.append(ListItem(Label(f"{svc['name']:40s}  {svc['address']}")))
+        if len(services) == 1:
+            self.dismiss(services[0]["address"])
+            return
+        lv.index = 0
+        self.call_after_refresh(lv.focus)
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        idx = self.query_one("#rp-list", ListView).index
+        if idx is None or not getattr(self, "_services", None):
+            return
+        self.dismiss(self._services[idx]["address"])
+
+    def action_rescan(self) -> None:
+        self.query_one("#rp-status", Static).update("Rescanning…")
+        self.query_one("#rp-list", ListView).clear()
+        self.run_worker(self._scan, thread=True, exclusive=True)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+class SsrcPickerScreen(Screen[Optional[int]]):
+    """Lists SSRCs on the chosen radiod and lets the user pick one (or all)."""
+
+    DEFAULT_CSS = """
+    SsrcPickerScreen { align: center middle; }
+    SsrcPickerScreen > Vertical {
+        background: $panel; border: thick $accent;
+        padding: 1 2; width: 100; height: 28;
+    }
+    SsrcPickerScreen DataTable { height: 1fr; }
+    """
+    BINDINGS = [
+        Binding("r", "rescan", "Rescan", priority=True),
+        Binding("a", "all_ssrcs", "All", priority=True),
+        Binding("escape", "cancel", "Back", priority=True),
+        Binding("q", "force_quit", "Quit", priority=True),
+        Binding("ctrl+c", "force_quit", "Quit", priority=True, show=False),
+    ]
+
+    def action_force_quit(self) -> None:
+        self.app.exit()
+
+    def __init__(self, host: str, interface: Optional[str] = None) -> None:
+        super().__init__()
+        self._host = host
+        self._interface = interface
+        self._ssrcs: list[int] = []
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Label(
+                f"SSRCs on {self._host}  "
+                "(Enter=pick  a=all  r=rescan  Esc=back)"
+            )
+            yield Static("Discovering channels…", id="sp-status")
+            t = DataTable(id="sp-table", cursor_type="row")
+            t.add_columns("SSRC", "Freq (MHz)", "Preset", "Rate", "SNR", "Dest")
+            yield t
+
+    def on_mount(self) -> None:
+        self.run_worker(self._scan, thread=True, exclusive=True)
+
+    def _scan(self) -> None:
+        try:
+            channels = discover_channels(
+                self._host, listen_duration=2.0, interface=self._interface
+            )
+        except Exception as exc:  # noqa: BLE001
+            self.app.call_from_thread(self._show_error, str(exc))
+            return
+        self.app.call_from_thread(self._populate, channels)
+
+    def _show_error(self, msg: str) -> None:
+        self.query_one("#sp-status", Static).update(f"Error: {msg}")
+
+    def _populate(self, channels: dict) -> None:
+        table = self.query_one("#sp-table", DataTable)
+        table.clear()
+        self._ssrcs = []
+        if not channels:
+            self.query_one("#sp-status", Static).update(
+                "No SSRCs found. Press r to rescan, a for all, or Esc to go back."
+            )
+            return
+        self.query_one("#sp-status", Static).update(
+            f"Found {len(channels)} channel(s). Enter to pick, a for all."
+        )
+        for ssrc in sorted(channels):
+            ch: ChannelInfo = channels[ssrc]
+            snr = "—" if ch.snr == float("-inf") else f"{ch.snr:.1f}"
+            table.add_row(
+                str(ssrc),
+                f"{ch.frequency / 1e6:.6f}",
+                ch.preset,
+                f"{ch.sample_rate}",
+                snr,
+                f"{ch.multicast_address}:{ch.port}",
+            )
+            self._ssrcs.append(ssrc)
+        self.call_after_refresh(table.focus)
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        idx = event.cursor_row
+        if 0 <= idx < len(self._ssrcs):
+            self.dismiss(self._ssrcs[idx])
+
+    def action_all_ssrcs(self) -> None:
+        self.dismiss(0)  # 0 sentinel = "all SSRCs" (radiod never uses 0)
+
+    def action_rescan(self) -> None:
+        self.query_one("#sp-status", Static).update("Rescanning…")
+        self.query_one("#sp-table", DataTable).clear()
+        self.run_worker(self._scan, thread=True, exclusive=True)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+# ---------------------------------------------------------------------------
 # App
 # ---------------------------------------------------------------------------
 
@@ -337,6 +520,7 @@ class Ka9qApp(App):
 
     BINDINGS = [
         Binding("q", "quit", "Quit"),
+        Binding("ctrl+c", "quit", "Quit", priority=True, show=False),
         Binding("question_mark,h", "help", "Help"),
         Binding("f", "prompt('frequency', 'Carrier frequency (Hz)')", "Freq"),
         Binding("p", "prompt('preset', 'Preset / mode')", "Preset"),
@@ -359,16 +543,18 @@ class Ka9qApp(App):
         Binding("x", "toggle_threshold_extend", "ThExt"),
         Binding("t", "prompt('pl-tone', 'PL tone (Hz, 0 off)')", "PLtone"),
         Binding("D", "prompt('demod-type', 'Demod type (linear/fm/wfm/spect)')", "Demod"),
+        Binding("M", "repick", "Pick radiod/SSRC"),
     ]
 
     status: reactive[Optional[ChannelStatus]] = reactive(None)
 
-    def __init__(self, host: str, ssrc: Optional[int] = None,
+    def __init__(self, host: Optional[str] = None, ssrc: Optional[int] = None,
                  interface: Optional[str] = None) -> None:
         super().__init__()
         self._host = host
         self._ssrc = ssrc
-        self._control = RadiodControl(host, interface=interface)
+        self._interface = interface
+        self._control: Optional[RadiodControl] = None
         self._queue: Queue = Queue()
         self._worker: Optional[_StatusWorker] = None
 
@@ -376,7 +562,8 @@ class Ka9qApp(App):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
-        yield Static(f"radiod: {self._host}   SSRC: {self._ssrc or 'any'}",
+        yield Static(f"radiod: {self._host or '(picking…)'}   "
+                     f"SSRC: {self._ssrc or 'any'}",
                      id="header-line")
         with Grid(id="grid"):
             yield TuningPanel()
@@ -392,17 +579,54 @@ class Ka9qApp(App):
 
     def on_mount(self) -> None:
         self.title = "ka9q TUI"
-        self.sub_title = self._host
+        self.sub_title = self._host or ""
+        if self._host is None:
+            self.push_screen(RadiodPickerScreen(), self._on_host_picked)
+        else:
+            self._start_session()
+
+    def _on_host_picked(self, host: Optional[str]) -> None:
+        if not host:
+            self.exit()
+            return
+        self._host = host
+        self.sub_title = host
+        self.push_screen(
+            SsrcPickerScreen(host, interface=self._interface),
+            self._on_ssrc_picked,
+        )
+
+    def _on_ssrc_picked(self, ssrc: Optional[int]) -> None:
+        if ssrc is None:
+            # Back out to host picker
+            self._host = None
+            self.sub_title = ""
+            self.push_screen(RadiodPickerScreen(), self._on_host_picked)
+            return
+        self._ssrc = ssrc if ssrc != 0 else None
+        self._start_session()
+
+    def _start_session(self) -> None:
+        self.query_one("#header-line", Static).update(
+            f"radiod: {self._host}   SSRC: {self._ssrc or 'any'}"
+        )
+        if self._control is None:
+            self._control = RadiodControl(self._host, interface=self._interface)
         ssrcs = {self._ssrc} if self._ssrc else None
+        if self._worker is not None:
+            self._worker.stop()
         self._worker = _StatusWorker(self._control, self._queue, ssrcs)
         self._worker.start()
-        self.set_interval(0.2, self._drain_queue)
-        self.set_interval(1.0, self._tick_poll)
-        # Kick once to populate immediately (non-fatal on error)
+        if not getattr(self, "_intervals_started", False):
+            self.set_interval(0.2, self._drain_queue)
+            self.set_interval(1.0, self._tick_poll)
+            self._intervals_started = True
         if self._ssrc:
             self.run_worker(self._initial_poll, thread=True, exclusive=False)
 
     def _initial_poll(self) -> None:
+        if self._control is None:
+            return
         try:
             st = self._control.poll_status(self._ssrc, timeout=2.0)
             self._queue.put(st)
@@ -410,25 +634,43 @@ class Ka9qApp(App):
             pass
 
     def _tick_poll(self) -> None:
-        if not self._ssrc:
+        if not self._ssrc or self._control is None:
             return
         self.run_worker(self._poll_once, thread=True, exclusive=False,
                         group="poll")
 
     def _poll_once(self) -> None:
+        if self._control is None:
+            return
         try:
             st = self._control.poll_status(self._ssrc, timeout=0.8)
             self._queue.put(st)
         except Exception:
             pass
 
+    def action_repick(self) -> None:
+        if self._worker:
+            self._worker.stop()
+            self._worker = None
+        if self._control is not None:
+            try:
+                self._control.close()
+            except Exception:
+                pass
+            self._control = None
+        self._host = None
+        self._ssrc = None
+        self.status = None
+        self.push_screen(RadiodPickerScreen(), self._on_host_picked)
+
     def on_unmount(self) -> None:
         if self._worker:
             self._worker.stop()
-        try:
-            self._control.close()
-        except Exception:
-            pass
+        if self._control is not None:
+            try:
+                self._control.close()
+            except Exception:
+                pass
 
     # --- status plumbing ----------------------------------------------
 

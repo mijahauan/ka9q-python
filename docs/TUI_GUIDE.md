@@ -18,18 +18,38 @@ pip install -e ".[dev,tui]"
 ## Launch
 
 ```bash
-# Watch a specific SSRC (recommended)
-ka9q tui bee1-hf-status.local --ssrc 14095000
+# Fully interactive: pick a radiod via mDNS, then pick an SSRC
+ka9q tui
 
-# Or discover interactively — the TUI latches onto the first SSRC
-# seen on the status multicast
+# Skip the radiod picker; still prompts for SSRC
 ka9q tui bee1-hf-status.local
 
+# Skip both pickers, jump straight to the live view
+ka9q tui bee1-hf-status.local --ssrc 14095000
+
 # Pin a network interface when the host is multi-homed
-ka9q tui bee1-hf-status.local --ssrc 14095000 --interface eth0
+ka9q tui --interface eth0
 ```
 
-Find SSRCs first with `ka9q list HOST`.
+`ka9q list HOST` still works for non-interactive SSRC enumeration.
+
+### Picker screens
+
+When `host` is omitted, the TUI opens a two-step picker before the live
+view:
+
+1. **Radiod picker** — runs `discover_radiod_services()` (avahi/mDNS
+   browse of `_ka9q-ctl._udp`) and lists every responding instance. Use
+   the arrows to highlight one and Enter to pick. `r` rescans, `q`/Esc
+   quits. If only one service answers, it auto-selects.
+2. **SSRC picker** — runs `discover_channels()` against the chosen host
+   and shows a sortable table of `SSRC │ Freq (MHz) │ Preset │ Rate │
+   SNR │ Dest`. Enter picks the highlighted row, `a` selects "all
+   SSRCs" (the listener latches onto whichever arrives first), `r`
+   rescans, Esc returns to the radiod picker.
+
+From the live view, **`M`** re-enters the picker chain to switch
+radiod/SSRC without restarting the process.
 
 ## Update cadence
 
@@ -110,8 +130,9 @@ prompt; toggle keys act immediately.
 | `i` | Toggle independent sideband | `set_independent_sideband` |
 | `v` | Toggle envelope detection | `set_envelope_detection` |
 | `x` | Toggle FM threshold-extend | `set_fm_threshold_extension` |
+| `M` | Re-pick radiod / SSRC | — |
 | `?` / `h` | Show help overlay | — |
-| `q` | Quit | — |
+| `q` / Ctrl-C | Quit | — |
 
 Prompt keys dispatch through `SET_VERBS` in
 [cli.py:163](../ka9q/cli.py#L163), so any value accepted by `ka9q set`

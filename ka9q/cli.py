@@ -322,7 +322,8 @@ def build_parser() -> argparse.ArgumentParser:
     ps.set_defaults(func=cmd_set)
 
     pt = sub.add_parser("tui", help="Launch the Textual TUI")
-    pt.add_argument("host")
+    pt.add_argument("host", nargs="?",
+                    help="radiod host (omit to pick from mDNS discovery)")
     pt.add_argument("--ssrc", type=int, help="Focus a specific SSRC at startup")
     pt.set_defaults(func=cmd_tui)
 
