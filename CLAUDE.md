@@ -10,30 +10,35 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Install for development
 ```bash
-pip install -e ".[dev]"
+uv sync --extra dev                    # standard; creates .venv/
+# or: pip install -e ".[dev]"          # pip fallback
 ```
 
 ### Run tests
 ```bash
 # All tests (unit tests run without a live radiod)
-pytest
+uv run pytest
 
 # Integration tests against a live radiod host
-pytest --radiod-host=bee1-hf-status.local
+uv run pytest --radiod-host=bee1-hf-status.local
 # or via environment variable
-RADIOD_HOST=bee1-hf-status.local pytest
+RADIOD_HOST=bee1-hf-status.local uv run pytest
 
 # Single test file
-pytest tests/test_control.py -v
+uv run pytest tests/test_control.py -v
 
 # With coverage
-pytest --cov=ka9q --cov-report=html
+uv run pytest --cov=ka9q --cov-report=html
 ```
 
 ### Build distribution
 ```bash
-python -m build
+uv build                               # produces sdist + wheel in dist/
 ```
+
+### Library lockfile policy
+`uv.lock` is gitignored for this library; a library's lockfile does not bind
+downstream consumers. Clients pin ka9q-python via their own `uv.lock`.
 
 ## Architecture
 

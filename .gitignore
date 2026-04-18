@@ -50,10 +50,14 @@ coverage.xml
 
 # Virtual environments
 venv/
+.venv/
 env/
 ENV/
 env.bak/
 venv.bak/
+
+# uv: library — lockfile is not authoritative for downstream consumers
+uv.lock
 
 # IDEs
 .vscode/
