@@ -1,1438 +1,848 @@
-# API Reference - ka9q-python
+# API Reference — ka9q-python
 
-Complete reference for all public APIs, parameters, and constants.
+Reference for every public symbol exported from `ka9q/__init__.py`
+(version 3.9.0).
 
----
-
-## Table of Contents
-
-1. [RadiodControl Class](#radiodcontrol-class)
-2. [Discovery Functions](#discovery-functions)
-3. [RTP Recording](#rtp-recording)
-4. [Constants](#constants)
-5. [Exceptions](#exceptions)
-6. [Utility Functions](#utility-functions)
-
----
-
-## RadiodControl Class
-
-Main class for controlling radiod channels.
-
-### Constructor
+The package is installed as `ka9q-python` and imported as `ka9q`:
 
 ```python
-RadiodControl(status_address: str, 
-              max_commands_per_sec: int = 100,
-              interface: Optional[str] = None)
+import ka9q
+from ka9q import RadiodControl, ManagedStream, ChannelStatus
 ```
 
-**Parameters:**
-- `status_address` (str): mDNS name (e.g., "radiod.local") or IP address of radiod status stream
-- `max_commands_per_sec` (int): Maximum commands per second for rate limiting (default: 100)
-- `interface` (str, optional): IP address of network interface for multicast (e.g., '192.168.1.100'). Required on multi-homed systems. If None, uses INADDR_ANY (0.0.0.0) which works on single-homed systems.
-
-**Raises:**
-- `ConnectionError`: If unable to connect to radiod
-
-**Example:**
-```python
-# Single-homed system (default)
-control = RadiodControl("bee1-hf-status.local")
-
-# Multi-homed system (specify interface)
-control = RadiodControl("bee1-hf-status.local", interface="192.168.1.100")
-
-# Custom rate limit
-control = RadiodControl("239.251.200.193", max_commands_per_sec=50)
-```
-
-**New in v2.2.0**: Rate limiting parameter added to prevent DoS attacks  
-**New in v2.3.0**: Interface parameter added for multi-homed system support
+Source files are linked inline; only public, re-exported symbols are
+documented here.
 
 ---
 
-### Context Manager Support
+## Contents
 
-`RadiodControl` supports the context manager protocol:
+1. [Quickstart](#quickstart)
+2. [RadiodControl](#radiodcontrol)
+3. [Discovery](#discovery)
+4. [Types & Enums](#types--enums)
+5. [Typed Status Decoders](#typed-status-decoders)
+6. [Streams](#streams)
+7. [RTP Recording](#rtp-recording)
+8. [L6 BPSK PPS Calibration](#l6-bpsk-pps-calibration)
+9. [Utilities](#utilities)
+10. [Exceptions](#exceptions)
+11. [CLI: `ka9q`](#cli-ka9q)
+
+---
+
+## Quickstart
+
+ka9q-python provides four layers for consuming a radiod RTP stream.
+Pick the highest layer that fits:
+
+| Layer | Class | Use when... |
+|---|---|---|
+| Raw RTP packets | [`RTPRecorder`](../ka9q/rtp_recorder.py) | Timing accuracy matters (WSPR/FT8/science) |
+| Continuous samples | [`RadiodStream`](../ka9q/stream.py) | You want numpy arrays with gap-filling |
+| Self-healing samples | [`ManagedStream`](../ka9q/managed_stream.py) | Long-running client that must survive radiod restarts |
+| Many channels, one socket | [`MultiStream`](../ka9q/multi_stream.py) | 10+ channels on the same multicast group |
+
+All layers sit on top of [`RadiodControl`](../ka9q/control.py), which
+speaks the TLV protocol to radiod over multicast UDP.
+
+```python
+from ka9q import RadiodControl, ManagedStream
+
+def on_samples(samples, quality):
+    print(f"{len(samples)} samples, {quality.completeness_pct:.1f}% complete")
+
+with RadiodControl("radiod.local") as control:
+    stream = ManagedStream(
+        control=control,
+        frequency_hz=14.074e6,
+        preset="usb",
+        sample_rate=12000,
+        encoding=1,                # S16LE
+        on_samples=on_samples,
+    )
+    stream.start()
+    # ... runs through radiod restarts, reports via callbacks ...
+    stream.stop()
+```
+
+---
+
+## RadiodControl
+
+Central control class; speaks ka9q-radio's TLV binary protocol over
+multicast. All public methods are guarded by an `RLock` and are safe
+to call from multiple threads. Source: [control.py](../ka9q/control.py).
+
+### Construction
+
+```python
+RadiodControl(
+    status_address: str,
+    max_commands_per_sec: int = 100,
+    interface: Optional[str] = None,
+)
+```
+
+- `status_address` — mDNS name (e.g. `"radiod.local"`) or multicast
+  IPv4 of the radiod status group.
+- `max_commands_per_sec` — token-bucket rate limit (default 100).
+- `interface` — IP address of the NIC to bind multicast to. Required
+  on multi-homed systems; `None` uses `INADDR_ANY`.
+
+Raises [`ConnectionError`](#exceptions) on connect failure.
+
+Supports `with` (context manager) and will `close()` on exit.
+
+```python
+with RadiodControl("bee1-hf.local", interface="192.168.1.100") as c:
+    ...
+```
+
+### Channel creation & lifecycle
+
+| Method | Purpose |
+|---|---|
+| `ensure_channel(frequency_hz, preset="iq", sample_rate=16000, agc_enable=0, gain=0.0, destination=None, encoding=0, timeout=5.0, frequency_tolerance=1.0) -> ChannelInfo` | Recommended high-level entry point. Computes a deterministic SSRC, creates the channel if it doesn't already exist, verifies it via discovery, and returns a [`ChannelInfo`](#channelinfo). Safe to call repeatedly. |
+| `create_channel(frequency_hz, preset="iq", sample_rate=None, agc_enable=0, gain=0.0, destination=None, encoding=0, ssrc=None) -> int` | Lower-level: sends a single atomic TLV create packet and returns the SSRC. Does not verify. |
+| `verify_channel(ssrc, expected_freq=None) -> bool` | Poll radiod and check the channel exists (and matches `expected_freq` if given). |
+| `remove_channel(ssrc)` | Destroy a channel. |
+| `tune(ssrc, frequency_hz=None, preset=None, sample_rate=None, low_edge=None, high_edge=None, gain=None, agc_enable=None, rf_gain=None, rf_atten=None, encoding=None, destination=None, timeout=5.0) -> dict` | Multi-parameter tune in a single round-trip, matching ka9q-radio's `tune.c`. Returns a status dict. |
 
 ```python
 with RadiodControl("radiod.local") as control:
-    control.create_channel(...)
-# Automatic cleanup
+    ch = control.ensure_channel(
+        frequency_hz=14.074e6, preset="usb",
+        sample_rate=12000, encoding=1,
+    )
+    print(f"SSRC={ch.ssrc} at {ch.multicast_address}:{ch.port}")
+    control.remove_channel(ch.ssrc)
 ```
 
-**Methods:**
-- `__enter__()` → `RadiodControl`: Returns self
-- `__exit__(exc_type, exc_val, exc_tb)` → `bool`: Calls `close()`, returns False
+### Status queries
+
+- `poll_status(ssrc, timeout=2.0) -> ChannelStatus` — Send an
+  SSRC-only command and return the typed [`ChannelStatus`](#channelstatus).
+  Does not change channel state.
+- `listen_status(callback, duration=None, ssrcs=None)` — Passively
+  receive radiod's periodic status multicast and fan out to
+  `callback(status: ChannelStatus)`. Optionally filter by an `ssrcs`
+  set. Blocks for `duration` seconds (or forever).
+- `get_metrics() -> dict` / `reset_metrics()` — Library-side counters
+  (commands sent, retries, etc.).
+
+### Parameter setters
+
+All setters validate their inputs and raise [`ValidationError`](#exceptions)
+or [`CommandError`](#exceptions). SSRC is always the first argument.
+
+Tuning & filter:
+- `set_frequency(ssrc, frequency_hz)`
+- `set_preset(ssrc, preset)`  (preset names: `"iq"`, `"usb"`, `"lsb"`, `"am"`, `"fm"`, `"cw"`, ...)
+- `set_sample_rate(ssrc, sample_rate)`
+- `set_shift_frequency(ssrc, shift_hz)`
+- `set_first_lo(ssrc, frequency_hz)`
+- `set_doppler(ssrc, doppler_hz=0.0, doppler_rate_hz_per_sec=0.0)`
+- `set_filter(ssrc, low_edge=None, high_edge=None, kaiser_beta=None)`
+- `set_kaiser_beta(ssrc, beta)`
+- `set_filter2(ssrc, blocksize, kaiser_beta=None)`
+
+Gain / AGC:
+- `set_gain(ssrc, gain_db)`
+- `set_agc(ssrc, enable, hangtime=None, recovery_rate=None, threshold=None)`
+- `set_agc_hangtime(ssrc, seconds)`
+- `set_agc_recovery_rate(ssrc, db_per_sec)`
+- `set_agc_threshold(ssrc, threshold_db)`
+- `set_headroom(ssrc, headroom_db)`
+- `set_output_level(ssrc, level)`
+- `set_rf_gain(ssrc, gain_db)`
+- `set_rf_attenuation(ssrc, atten_db)`
+
+Demod-specific:
+- `set_demod_type(ssrc, demod_type)`  (see [`DemodType`](#demodtype))
+- `set_pll(ssrc, enable, bandwidth_hz=None, square=False)`
+- `set_squelch(ssrc, enable=True, open_snr_db=None, close_snr_db=None)`
+- `set_output_channels(ssrc, channels)`  (1 or 2)
+- `set_independent_sideband(ssrc, enable)`
+- `set_envelope_detection(ssrc, enable)`
+- `set_fm_threshold_extension(ssrc, enable)`
+- `set_pl_tone(ssrc, freq_hz)`
+
+Output / RTP / Opus:
+- `set_destination(ssrc, address, port=5004)`
+- `set_output_encoding(ssrc, encoding)`  (see [`Encoding`](#encoding))
+- `set_opus_bitrate(ssrc, bitrate)`
+- `set_opus_dtx(ssrc, enable)`
+- `set_opus_application(ssrc, application)`
+- `set_opus_bandwidth(ssrc, bandwidth)`
+- `set_opus_fec(ssrc, loss_percent)`
+
+Spectrum / misc:
+- `set_spectrum(ssrc, bin_bw_hz=None, bin_count=None, ...)`  (see source)
+- `set_status_interval(ssrc, interval)`
+- `set_max_delay(ssrc, max_blocks)`
+- `set_packet_buffering(ssrc, min_blocks)`
+- `set_lock(ssrc, lock)`  (freeze retune)
+- `set_description(ssrc, description)`
+- `set_options(ssrc, set_bits=0, clear_bits=0)`  (bitmask)
+
+For full signatures and protocol constants see
+[control.py](../ka9q/control.py).
+
+### Low-level escape hatches
+
+- `send_command(cmdbuffer, max_retries=3, retry_delay=0.1)` — Send a
+  pre-built TLV command buffer. Rate-limited.
+- `close()` — Release sockets. Safe to call more than once; invoked
+  automatically by the context manager and destructor.
+
+### `allocate_ssrc()` (module-level)
+
+```python
+allocate_ssrc(frequency_hz, preset="iq", sample_rate=16000,
+              agc=False, gain=0.0, destination=None,
+              encoding=0, radiod_host=None) -> int
+```
+
+Deterministic 31-bit SSRC hashed from channel parameters. The same
+inputs always yield the same SSRC, enabling stream sharing across
+restarts and processes. Hash algorithm matches `signal-recorder`'s
+`StreamSpec.ssrc_hash()`.
 
 ---
 
-### Channel Creation
+## Discovery
 
-#### `create_channel()`
-
-Create and configure a new radiod channel with all parameters in a single packet.
-
-```python
-create_channel(frequency_hz: float,
-               preset: str = "iq",
-               sample_rate: Optional[int] = None,
-               agc_enable: int = 0,
-               gain: float = 0.0,
-               destination: Optional[str] = None,
-               encoding: int = 0,
-               ssrc: Optional[int] = None) → int
-```
-
-**Parameters:**
-
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `frequency_hz` | float | Yes | - | RF frequency in Hz (typically 0-10 GHz) |
-| `preset` | str | No | "iq" | Demodulation mode: "iq", "usb", "lsb", "am", "fm", "cw" |
-| `sample_rate` | int | No | None | Output sample rate in Hz (e.g., 12000, 48000, 16000) |
-| `agc_enable` | int | No | 0 | AGC: 0=disabled/manual, 1=enabled |
-| `gain` | float | No | 0.0 | Manual gain in dB (-60 to +60) when agc_enable=0 |
-| `destination` | str | No | None | RTP destination multicast address (e.g., "239.1.2.3" or "239.1.2.3:5004"). If None, uses radiod's default |
-| `encoding` | int | No | 0 | Output encoding (0=default, 4=F32, 5=F16, etc.). See `Encoding` class for options |
-| `ssrc` | int | No | None | Channel identifier (0-4294967295). If None, automatically allocated from parameters |
-
-**Raises:**
-- `ValidationError`: If parameters are out of valid ranges
-- `CommandError`: If command fails to send
-- `RuntimeError`: If not connected to radiod
-
-**Returns:**
-- `int`: The SSRC of the created channel
-
-**Example:**
-```python
-# Basic usage with automatic SSRC allocation
-ssrc = control.create_channel(
-    frequency_hz=14.074e6,
-    preset="usb",
-    sample_rate=12000
-)
-print(f"Created channel with SSRC: {ssrc}")
-
-# Advanced usage with specific encoding and destination
-ssrc = control.create_channel(
-    frequency_hz=10.0e6,
-    preset="am",
-    sample_rate=12000,
-    agc_enable=1,
-    destination="239.1.2.3:5004",
-    encoding=Encoding.F32
-)
-```
-
-**Notes:**
-- All parameters sent in a single packet (atomic operation)
-- Radiod creates channel on first command for new SSRC
-- RTP stream becomes available at destination multicast address
-
----
-
-### Channel Configuration
-
-#### `set_frequency()`
-
-Set the frequency of an existing channel.
+Source: [discovery.py](../ka9q/discovery.py). All discovery calls are
+read-only — they listen passively and, if needed, send a single poll.
 
 ```python
-set_frequency(ssrc: int, frequency_hz: float) → None
+discover_channels(status_address, listen_duration=2.0,
+                  use_native=True, interface=None) -> Dict[int, ChannelInfo]
 ```
-
-**Parameters:**
-- `ssrc` (int): SSRC of the channel (0-4294967295)
-- `frequency_hz` (float): Frequency in Hz (0-10 THz)
-
-**Raises:**
-- `ValidationError`: If parameters are invalid
-- `CommandError`: If command fails to send
-
-**Example:**
-```python
-control.set_frequency(ssrc=14074000, frequency_hz=14.095e6)
-```
-
----
-
-#### `set_preset()`
-
-Set the preset (demodulation mode) of a channel.
+Primary entry point. Tries native Python discovery first, falls back to
+the external `control` utility from ka9q-radio on failure.
 
 ```python
-set_preset(ssrc: int, preset: str) → None
+discover_channels_native(status_address, listen_duration=2.0,
+                         interface=None) -> Dict[int, ChannelInfo]
 ```
-
-**Parameters:**
-- `ssrc` (int): SSRC of the channel
-- `preset` (str): Preset name ("iq", "usb", "lsb", "am", "fm", "cw")
-
-**Example:**
-```python
-control.set_preset(ssrc=14074000, preset="usb")
-```
-
----
-
-#### `set_sample_rate()`
-
-Set the output sample rate of a channel.
+Pure-Python: joins the status multicast group, sends a broadcast poll,
+and decodes the TLV responses for `listen_duration` seconds.
 
 ```python
-set_sample_rate(ssrc: int, sample_rate: int) → None
+discover_channels_via_control(status_address, timeout=30.0)
+    -> Dict[int, ChannelInfo]
 ```
-
-**Parameters:**
-- `ssrc` (int): SSRC of the channel
-- `sample_rate` (int): Sample rate in Hz (1-100000000)
-
-**Raises:**
-- `ValidationError`: If parameters are invalid
-
-**Example:**
-```python
-control.set_sample_rate(ssrc=14074000, sample_rate=48000)
-```
-
----
-
-#### `set_gain()`
-
-Set manual gain for a channel (linear modes only).
+Shells out to the `control -v` utility. Fallback only; requires
+ka9q-radio installed locally.
 
 ```python
-set_gain(ssrc: int, gain_db: float) → None
+discover_radiod_services(timeout=10.0) -> list[dict]
 ```
+Find all `_ka9q-ctl._udp` services on the LAN via `avahi-browse`.
+Returns `[{"name": ..., "address": ...}, ...]` sorted by name.
 
-**Parameters:**
-- `ssrc` (int): SSRC of the channel
-- `gain_db` (float): Gain in dB (-100 to +100)
+### `ChannelInfo`
 
-**Raises:**
-- `ValidationError`: If parameters are invalid
-
-**Example:**
-```python
-control.set_gain(ssrc=14074000, gain_db=20.0)
-```
-
----
-
-#### `set_agc()`
-
-Configure AGC (Automatic Gain Control) for a channel.
-
-```python
-set_agc(ssrc: int,
-        enable: bool,
-        hangtime: Optional[float] = None,
-        headroom: Optional[float] = None,
-        recovery_rate: Optional[float] = None,
-        attack_rate: Optional[float] = None) → None
-```
-
-**Parameters:**
-- `ssrc` (int): SSRC of the channel
-- `enable` (bool): True=AGC enabled, False=manual gain
-- `hangtime` (float, optional): AGC hang time in seconds
-- `headroom` (float, optional): Target headroom in dB
-- `recovery_rate` (float, optional): AGC recovery rate
-- `attack_rate` (float, optional): AGC attack rate
-
-**Example:**
-```python
-control.set_agc(
-    ssrc=14074000,
-    enable=True,
-    hangtime=1.5,
-    headroom=10.0
-)
-```
-
----
-
-#### `set_filter()`
-
-Configure filter parameters for a channel.
-
-```python
-set_filter(ssrc: int,
-           low_edge: Optional[float] = None,
-           high_edge: Optional[float] = None,
-           kaiser_beta: Optional[float] = None) → None
-```
-
-**Parameters:**
-- `ssrc` (int): SSRC of the channel
-- `low_edge` (float, optional): Low frequency edge in Hz
-- `high_edge` (float, optional): High frequency edge in Hz
-- `kaiser_beta` (float, optional): Kaiser window beta parameter
-
-**Example:**
-```python
-control.set_filter(
-    ssrc=14074000,
-    low_edge=-2400,
-    high_edge=2400
-)
-```
-
----
-
-#### `set_shift_frequency()`
-
-Set post-detection frequency shift (for CW offset, etc.).
-
-```python
-set_shift_frequency(ssrc: int, shift_hz: float) → None
-```
-
-**Parameters:**
-- `ssrc` (int): SSRC of the channel
-- `shift_hz` (float): Frequency shift in Hz
-
-**Example:**
-```python
-control.set_shift_frequency(ssrc=14074000, shift_hz=800)
-```
-
----
-
-#### `set_output_level()`
-
-Set output level for a channel.
-
-```python
-set_output_level(ssrc: int, level: float) → None
-```
-
-**Parameters:**
-- `ssrc` (int): SSRC of the channel
-- `level` (float): Output level (range depends on mode)
-
----
-
-### Channel Lifecycle
-
-#### `remove_channel()`
-
-**New in v2.2.0**
-
-Remove a channel from radiod by marking it for removal.
-
-```python
-remove_channel(ssrc: int) → None
-```
-
-**Parameters:**
-- `ssrc` (int): SSRC of the channel to remove
-
-**Raises:**
-- `ValidationError`: If SSRC is invalid
-
-**Example:**
-```python
-# Always cleanup channels when done
-with RadiodControl("radiod.local") as control:
-    control.create_channel(ssrc=14074000, frequency_hz=14.074e6, preset="usb")
-    # ... use channel ...
-    control.remove_channel(ssrc=14074000)  # Mark for removal
-```
-
-**Important Notes:**
-- Removal is **NOT instantaneous** - radiod polls periodically for channels to remove
-- Setting frequency to 0 marks the channel for removal
-- Channel may still appear in discovery briefly after calling this method
-- **Always** remove channels when your application is done with them
-- Essential for long-running applications to prevent resource accumulation
-
-**Best Practices:**
-```python
-# Pattern 1: Context manager with cleanup
-with RadiodControl("radiod.local") as control:
-    control.create_channel(ssrc=14074000, frequency_hz=14.074e6)
-    try:
-        # Use channel...
-        pass
-    finally:
-        control.remove_channel(ssrc=14074000)
-
-# Pattern 2: Track and cleanup multiple channels
-channels = []
-try:
-    for freq in [14.074e6, 7.074e6, 3.573e6]:
-        ssrc = int(freq)
-        control.create_channel(ssrc=ssrc, frequency_hz=freq)
-        channels.append(ssrc)
-    # Use channels...
-finally:
-    for ssrc in channels:
-        control.remove_channel(ssrc)
-```
-
----
-
-### Tuning and Status
-
-#### `tune()`
-
-Tune a channel and retrieve its status (like tune.c in ka9q-radio).
-
-```python
-tune(ssrc: int,
-     frequency_hz: Optional[float] = None,
-     preset: Optional[str] = None,
-     sample_rate: Optional[int] = None,
-     low_edge: Optional[float] = None,
-     high_edge: Optional[float] = None,
-     gain: Optional[float] = None,
-     agc_enable: Optional[bool] = None,
-     rf_gain: Optional[float] = None,
-     rf_atten: Optional[float] = None,
-     encoding: Optional[int] = None,
-     destination: Optional[str] = None,
-     timeout: float = 5.0) → dict
-```
-
-**Parameters:**
-- `ssrc` (int): SSRC of the channel to tune
-- `frequency_hz` (float, optional): Frequency in Hz
-- `preset` (str, optional): Preset/mode name
-- `sample_rate` (int, optional): Sample rate in Hz
-- `low_edge` (float, optional): Low filter edge in Hz
-- `high_edge` (float, optional): High filter edge in Hz
-- `gain` (float, optional): Manual gain in dB (disables AGC)
-- `agc_enable` (bool, optional): Enable AGC
-- `rf_gain` (float, optional): RF front-end gain in dB
-- `rf_atten` (float, optional): RF front-end attenuation in dB
-- `encoding` (int, optional): Output encoding type (use `Encoding` constants)
-- `destination` (str, optional): Destination multicast address
-- `timeout` (float): Maximum time to wait for response (default: 5.0s)
-
-**Returns:**
-
-Dictionary containing channel status with keys:
-
-| Key | Type | Description |
-|-----|------|-------------|
-| `ssrc` | int | Channel SSRC |
-| `frequency` | float | Radio frequency in Hz |
-| `preset` | str | Mode/preset name |
-| `sample_rate` | int | Sample rate in Hz |
-| `agc_enable` | bool | AGC enabled status |
-| `gain` | float | Current gain in dB |
-| `rf_gain` | float | RF gain in dB |
-| `rf_atten` | float | RF attenuation in dB |
-| `rf_agc` | int | RF AGC status |
-| `low_edge` | float | Low filter edge in Hz |
-| `high_edge` | float | High filter edge in Hz |
-| `noise_density` | float | Noise density in dB/Hz |
-| `baseband_power` | float | Baseband power in dB |
-| `encoding` | int | Output encoding type |
-| `destination` | dict | Destination socket address |
-| `snr` | float | Signal-to-noise ratio in dB (calculated) |
-
-**Raises:**
-- `ValidationError`: If parameters are invalid
-- `TimeoutError`: If no matching response received within timeout
-
-**Example:**
-```python
-status = control.tune(
-    ssrc=14074000,
-    frequency_hz=14.074e6,
-    preset="usb",
-    sample_rate=12000,
-    timeout=10.0
-)
-
-print(f"Frequency: {status['frequency']/1e6:.3f} MHz")
-print(f"SNR: {status['snr']:.1f} dB")
-print(f"Preset: {status['preset']}")
-```
-
-**Notes:**
-- Sends commands and waits for status response
-- Matches responses by COMMAND_TAG
-- Useful for verifying channel configuration
-- Provides real-time signal quality metrics
-
----
-
-#### `verify_channel()`
-
-Verify that a channel exists and is configured correctly.
-
-```python
-verify_channel(ssrc: int, expected_freq: Optional[float] = None) → bool
-```
-
-**Parameters:**
-- `ssrc` (int): SSRC to verify
-- `expected_freq` (float, optional): Expected frequency in Hz
-
-**Returns:**
-- `bool`: True if channel exists and matches expectations, False otherwise
-
-**Example:**
-```python
-if control.verify_channel(ssrc=14074000, expected_freq=14.074e6):
-    print("Channel OK!")
-```
-
----
-
-### Connection Management
-
-#### `close()`
-
-Close all sockets and cleanup resources.
-
-```python
-close() → None
-```
-
-**Notes:**
-- Safe to call multiple times
-- Handles errors during cleanup gracefully
-- Automatically called by context manager
-
-**Example:**
-```python
-control = RadiodControl("radiod.local")
-try:
-    control.create_channel(...)
-finally:
-    control.close()
-```
-
----
-
-### Metrics and Observability
-
-**New in v2.2.0**
-
-#### `get_metrics()`
-
-Get operational metrics for monitoring and observability.
-
-```python
-get_metrics() → Metrics
-```
-
-**Returns:**
-- `Metrics`: Dataclass containing operational statistics
-
-**Example:**
-```python
-control = RadiodControl("radiod.local")
-control.create_channel(ssrc=14074000, frequency_hz=14.074e6)
-# ... perform operations ...
-
-metrics = control.get_metrics()
-print(f"Commands sent: {metrics.commands_sent}")
-print(f"Successful: {metrics.commands_successful}")
-print(f"Errors: {metrics.command_errors}")
-print(f"Timeouts: {metrics.command_timeouts}")
-print(f"Rate limits: {metrics.rate_limit_hits}")
-
-# Or as dictionary
-data = metrics.to_dict()
-print(f"Success rate: {data['success_rate']:.1%}")
-```
-
----
-
-#### `reset_metrics()`
-
-Reset all metrics counters to zero.
-
-```python
-reset_metrics() → None
-```
-
-**Example:**
-```python
-control.reset_metrics()  # Start fresh monitoring period
-# ... perform operations ...
-metrics = control.get_metrics()
-```
-
----
-
-#### Metrics Dataclass
-
-```python
-@dataclass
-class Metrics:
-    commands_sent: int = 0           # Total commands sent
-    commands_successful: int = 0     # Successfully sent commands
-    command_errors: int = 0          # Commands that failed
-    command_timeouts: int = 0        # Commands that timed out
-    rate_limit_hits: int = 0         # Times rate limit was enforced
-    
-    def to_dict() → dict:
-        """Convert to dictionary with calculated success_rate"""
-```
-
-**Dictionary Keys** (from `to_dict()`):
-- `commands_sent`: Total commands sent
-- `commands_successful`: Successfully sent
-- `command_errors`: Failed commands
-- `command_timeouts`: Timed out commands
-- `rate_limit_hits`: Rate limit enforcements
-- `success_rate`: Calculated as `successful / max(1, sent)` (0.0 to 1.0)
-
-**Thread Safety:**
-- All metrics operations are thread-safe
-- Counters use atomic operations
-
----
-
-### Low-Level Operations
-
-#### `send_command()`
-
-Send a raw TLV command packet to radiod (advanced usage).
-
-```python
-send_command(cmdbuffer: bytearray,
-             max_retries: int = 3,
-             retry_delay: float = 0.1) → int
-```
-
-**Parameters:**
-- `cmdbuffer` (bytearray): Command buffer to send
-- `max_retries` (int): Maximum number of retry attempts (default: 3)
-- `retry_delay` (float): Initial delay between retries in seconds (default: 0.1)
-
-**Returns:**
-- `int`: Number of bytes sent
-
-**Raises:**
-- `RuntimeError`: If not connected to radiod
-- `CommandError`: If sending fails after all retries
-
-**Notes:**
-- Uses exponential backoff for retries (0.1s → 0.2s → 0.4s)
-- Thread-safe with `_socket_lock`
-- **Rate limiting** enforced (v2.2.0+): Automatically sleeps if command rate exceeds `max_commands_per_sec`
-- Updates metrics counters for monitoring
-- Most users should use higher-level methods instead
-
----
-
-## Discovery Functions
-
-Functions for discovering active channels and radiod services.
-
-### `discover_channels()`
-
-Discover channels using the best available method.
-
-```python
-discover_channels(status_address: str,
-                  listen_duration: float = 2.0,
-                  use_native: bool = True,
-                  interface: Optional[str] = None) → Dict[int, ChannelInfo]
-```
-
-**Parameters:**
-- `status_address` (str): Status multicast address (e.g., "radiod.local")
-- `listen_duration` (float): Duration to listen for native discovery (default: 2.0s)
-- `use_native` (bool): If True, use native Python listener; if False, use control utility
-- `interface` (str, optional): IP address of network interface (e.g., '192.168.1.100'). Required on multi-homed systems.
-
-**Returns:**
-- `Dict[int, ChannelInfo]`: Dictionary mapping SSRC to ChannelInfo
-
-**Example:**
-```python
-# Single-homed system
-channels = discover_channels("radiod.local")
-
-# Multi-homed system
-channels = discover_channels("radiod.local", interface="192.168.1.100")
-
-for ssrc, info in channels.items():
-    print(f"SSRC {ssrc}: {info.frequency/1e6:.3f} MHz, {info.preset}")
-```
-
-**Notes:**
-- By default, tries native Python discovery first
-- Falls back to `control` utility if native finds no channels
-- Native discovery requires no external dependencies
-
----
-
-### `discover_channels_native()`
-
-Discover channels by listening to radiod status multicast (pure Python).
-
-```python
-discover_channels_native(status_address: str,
-                         listen_duration: float = 2.0,
-                         interface: Optional[str] = None) → Dict[int, ChannelInfo]
-```
-
-**Parameters:**
-- `status_address` (str): Status multicast address
-- `listen_duration` (float): How long to listen for status packets (default: 2.0s)
-- `interface` (str, optional): IP address of network interface (e.g., '192.168.1.100'). Required on multi-homed systems.
-
-**Returns:**
-- `Dict[int, ChannelInfo]`: Dictionary mapping SSRC to ChannelInfo
-
-**Example:**
-```python
-# Single-homed system
-channels = discover_channels_native("radiod.local", listen_duration=5.0)
-
-# Multi-homed system
-channels = discover_channels_native("radiod.local", 
-                                   listen_duration=5.0,
-                                   interface="192.168.1.100")
-```
-
----
-
-### `discover_channels_via_control()`
-
-Discover channels using the 'control' utility from ka9q-radio.
-
-```python
-discover_channels_via_control(status_address: str,
-                               timeout: float = 30.0) → Dict[int, ChannelInfo]
-```
-
-**Parameters:**
-- `status_address` (str): Status multicast address
-- `timeout` (float): Timeout for control command (default: 30.0s)
-
-**Returns:**
-- `Dict[int, ChannelInfo]`: Dictionary mapping SSRC to ChannelInfo
-
-**Requirements:**
-- Requires `control` executable from ka9q-radio to be installed
-
----
-
-### `discover_radiod_services()`
-
-Find all radiod instances on the network via mDNS.
-
-```python
-discover_radiod_services() → List[dict]
-```
-
-**Returns:**
-- `List[dict]`: List of dictionaries with "name" and "address" keys
-
-**Example:**
-```python
-services = discover_radiod_services()
-for service in services:
-    print(f"{service['name']}: {service['address']}")
-```
-
-**Requirements:**
-- Requires `avahi-browse` (Linux) for mDNS discovery
-
----
-
-### ChannelInfo Dataclass
-
-**New in v2.4.0**: Added timing fields for RTP synchronization
+Dataclass returned by discovery and `ensure_channel()`.
 
 ```python
 @dataclass
 class ChannelInfo:
-    ssrc: int                        # Channel SSRC
-    preset: str                      # Mode/preset name
-    sample_rate: int                 # Sample rate in Hz
-    frequency: float                 # Frequency in Hz
-    snr: float                       # Signal-to-noise ratio in dB
-    multicast_address: str           # Destination multicast address
-    port: int                        # Destination port
-    gps_time: Optional[int] = None   # GPS nanoseconds (timing sync)
-    rtp_timesnap: Optional[int] = None  # RTP timestamp at GPS_TIME
+    ssrc: int
+    preset: str
+    sample_rate: int
+    frequency: float                      # Hz
+    snr: float                            # dB
+    multicast_address: str                # RTP destination
+    port: int                             # RTP destination port
+    gps_time: Optional[int] = None        # GPS ns at rtp_timesnap
+    rtp_timesnap: Optional[int] = None    # RTP ts aligned to gps_time
+    encoding: int = 0                     # see Encoding
+    chain_delay_correction_ns: Optional[int] = None  # L6 BPSK PPS correction
 ```
 
-**Timing Fields** (v2.4.0+):
-- `gps_time`: GPS nanoseconds since GPS epoch when RTP_TIMESNAP was captured
-- `rtp_timesnap`: RTP timestamp value at GPS_TIME moment
-- Used for precise RTP timestamp → wall clock conversion
-- See [RTP Recording](#rtp-recording) for usage
+The `gps_time` / `rtp_timesnap` pair is what
+[`rtp_to_wallclock()`](#rtp-recording) uses to convert RTP timestamps
+to UTC.
+
+---
+
+## Types & Enums
+
+Source: [types.py](../ka9q/types.py). Auto-generated from ka9q-radio's
+C headers by `scripts/sync_types.py`.
+
+### `StatusType`
+
+110+ integer constants for TLV type tags (e.g.
+`StatusType.RADIO_FREQUENCY = 33`, `StatusType.OUTPUT_SSRC = 18`).
+Used internally by the TLV encoder/decoder. See [types.py](../ka9q/types.py)
+for the full list — they mirror ka9q-radio's `status.h`.
+
+### `Encoding`
+
+RTP output encoding (integer values match ka9q-radio's `rtp.h`):
+
+| Name | Value | Notes |
+|---|---|---|
+| `NO_ENCODING` | 0 | radiod default |
+| `S16LE` | 1 | Signed 16-bit little-endian PCM |
+| `S16BE` | 2 | Signed 16-bit big-endian PCM |
+| `OPUS` | 3 | Opus audio |
+| `F32LE` | 4 | 32-bit float LE (also `Encoding.F32`) |
+| `AX25` | 5 | Packet radio |
+| `F16LE` | 6 | 16-bit float LE (also `Encoding.F16`) |
+| `OPUS_VOIP` | 7 | Opus with `APPLICATION_VOIP` |
+| `F32BE` | 8 | 32-bit float BE |
+| `F16BE` | 9 | 16-bit float BE |
+| `MULAW` | 10 | μ-law |
+| `ALAW` | 11 | A-law |
+
+### `DemodType`
+
+`LINEAR_DEMOD=0`, `FM_DEMOD=1`, `WFM_DEMOD=2`, `SPECT_DEMOD=3`,
+`SPECT2_DEMOD=4`.
+
+### `WindowType`
+
+FFT window constants: `KAISER_WINDOW=0`, `RECT_WINDOW=1`,
+`BLACKMAN_WINDOW=2`, `EXACT_BLACKMAN_WINDOW=3`, `GAUSSIAN_WINDOW=4`,
+`HANN_WINDOW=5`, `HAMMING_WINDOW=6`, `BLACKMAN_HARRIS_WINDOW=7`,
+`HP5FT_WINDOW=8`.
+
+---
+
+## Typed Status Decoders
+
+Source: [status.py](../ka9q/status.py). These dataclasses mirror the
+C `struct channel` / `struct frontend` that radiod serialises into
+each status packet. They are a typed superset of the dict returned by
+`RadiodControl._decode_status_response()`.
+
+```python
+decode_status_packet(buffer: bytes) -> Optional[ChannelStatus]
+```
+Decode a raw TLV status packet. Returns `None` if the first byte
+isn't 0 (i.e. not a status packet). Unknown TLV tags are skipped.
+
+### `ChannelStatus`
+
+Top-level dataclass with nested sub-structures. Selected fields,
+grouped by category:
+
+- **Identification** — `ssrc`, `description`, `preset`, `demod_type`,
+  `rtp_pt`, `command_tag`, `gps_time`, `rtp_timesnap`.
+- **Tuning** — `frequency`, `first_lo`, `second_lo`, `shift`,
+  `doppler`, `doppler_rate`.
+- **Filter** — `low_edge`, `high_edge`, `kaiser_beta`,
+  `filter_blocksize`, `filter_fir_length`, `filter_drops`, `noise_bw`.
+- **Squelch / AGC / gain** — `snr_squelch_enable`, `squelch_open`,
+  `squelch_close`, `agc_enable`, `gain`, `headroom`, `agc_hangtime`,
+  `agc_recovery_rate`, `agc_threshold`, `output_level`,
+  `baseband_power`, `noise_density`, `envelope`.
+- **Output / RTP** — `output_ssrc`, `output_samprate`,
+  `output_channels`, `output_encoding`, `output_data_dest_socket`,
+  `output_data_source_socket`, `output_ttl`, `output_samples`,
+  `output_data_packets`, `output_metadata_packets`, `output_errors`,
+  `maxdelay`.
+- **Nested sub-structures** — `pll`, `fm`, `spectrum`, `filter2`,
+  `opus`, `frontend` (see below).
+
+Derived properties:
+
+- `bandwidth` — `|high_edge − low_edge|`.
+- `snr` — dB, from baseband and noise density.
+- `snr_per_hz` — dB-Hz.
+- `demod_name` — human-readable demodulator (`"Linear"`, `"FM"`, ...).
+- `encoding_name` — symbolic `Encoding` name.
+
+Helpers:
+
+- `to_dict()` — flattens to nested JSON-safe dict.
+- `get_field(path)` — dotted-path accessor (e.g.
+  `status.get_field("pll.lock")` or `status.get_field("frontend.calibrate")`).
+- `field_names()` — all dotted paths that are currently populated.
+  This is what the CLI `query --field` and TUI autocompletion use.
+
+```python
+status = control.poll_status(ssrc)
+print(status.frequency, status.pll.lock, status.frontend.calibrate_ppm)
+for path in status.field_names():
+    print(path, "=", status.get_field(path))
+```
+
+### `FrontendStatus`
+
+State of the SDR front-end (RX888, etc.), embedded as
+`ChannelStatus.frontend`. Key fields: `description`, `input_samprate`,
+`ad_bits_per_sample`, `ad_over`, `calibrate`, `first_lo`, `lock`,
+`fe_low_edge`, `fe_high_edge`, `lna_gain`, `mixer_gain`, `if_gain`,
+`rf_gain`, `rf_atten`, `rf_agc`, `if_power`, `rf_level_cal`,
+`dc_i_offset`, `dc_q_offset`, `iq_imbalance`, `iq_phase`.
+
+Derived properties:
+
+- `calibrate_ppm` — GPSDO clock error in ppm.
+- `gpsdo_reference_hz` — implied reference frequency (10 MHz × (1 + calibrate)).
+- `input_power_dbm` — absolute power if the front-end is calibrated.
+
+### Sub-status dataclasses
+
+- `PllStatus` — `enable`, `lock`, `square`, `phase`, `bw`, `snr`,
+  `wraps`, `freq_offset`.
+- `FmStatus` — `peak_deviation`, `fm_snr`, `pl_tone`, `pl_deviation`,
+  `deemph_tc`, `deemph_gain`, `threshold_extend`.
+- `SpectrumStatus` — `avg`, `base`, `step`, `shape`, `fft_n`,
+  `overlap`, `resolution_bw`, `noise_bw`, `bin_count`, `crossover`,
+  `window_type`.
+- `Filter2Status` — `blocking`, `blocksize`, `fir_length`,
+  `kaiser_beta`.
+- `OpusStatus` — `bit_rate`, `dtx`, `application`, `bandwidth`, `fec`.
+
+---
+
+## Streams
+
+### `RadiodStream`
+
+Source: [stream.py](../ka9q/stream.py). Continuous-sample consumer
+with packet resequencing and gap-filling.
+
+```python
+RadiodStream(
+    channel: ChannelInfo,
+    on_samples: Callable[[np.ndarray, StreamQuality], None] | None = None,
+    samples_per_packet: int = 320,
+    resequence_buffer_size: int = 64,
+    deliver_interval_packets: int = 10,
+)
+```
+
+- `start()` — open the multicast socket and begin the receive thread.
+- `stop() -> StreamQuality` — stop and return the final quality report.
+- `is_running() -> bool`
+- `get_quality() -> StreamQuality` — snapshot of the live quality state.
+
+Sample dtype depends on the channel: IQ modes (`"iq"`, `"spectrum"`)
+produce `complex64`; audio modes produce `float32`. The callback is
+invoked every `deliver_interval_packets` packets with a concatenated
+numpy array and a `StreamQuality` snapshot.
+
+```python
+def on_samples(samples, quality):
+    print(f"{len(samples)} sa, complete={quality.completeness_pct:.1f}%")
+
+stream = RadiodStream(channel, on_samples=on_samples)
+stream.start(); time.sleep(10); stream.stop()
+```
+
+### `ManagedStream`
+
+Source: [managed_stream.py](../ka9q/managed_stream.py). Wraps
+`RadiodStream` with health monitoring and automatic re-establishment
+through radiod restarts.
+
+```python
+ManagedStream(
+    control,                     # RadiodControl
+    frequency_hz,
+    preset="iq",
+    sample_rate=16000,
+    agc_enable=0,
+    gain=0.0,
+    destination=None,
+    encoding=0,
+    on_samples=None,             # (np.ndarray, StreamQuality) -> None
+    on_stream_dropped=None,      # (reason: str) -> None
+    on_stream_restored=None,     # (ChannelInfo) -> None
+    drop_timeout_sec=3.0,
+    restore_interval_sec=1.0,
+    max_restore_attempts=0,      # 0 = unlimited
+    samples_per_packet=320,
+    resequence_buffer_size=64,
+    deliver_interval_packets=10,
+)
+```
+
+- `start() -> ChannelInfo` — establish channel and begin streaming.
+- `stop() -> ManagedStreamStats` — halt threads and return aggregate stats.
+- `state -> StreamState` / `channel -> ChannelInfo` / `is_healthy -> bool`.
+- `get_stats() -> ManagedStreamStats` / `get_quality() -> StreamQuality`.
+- Supports the `with` protocol (`__enter__`/`__exit__`).
+
+#### `StreamState`
+
+Enum: `STOPPED`, `STARTING`, `HEALTHY`, `DROPPED`, `RESTORING`.
+
+#### `ManagedStreamStats`
+
+Dataclass with `state`, `total_drops`, `total_restorations`,
+`last_drop_time`, `last_restore_time`, `last_drop_reason`,
+`current_healthy_duration_sec`, `total_healthy_duration_sec`,
+`total_dropped_duration_sec`. `copy()` returns a snapshot.
+
+### `MultiStream`
+
+Source: [multi_stream.py](../ka9q/multi_stream.py). A single receive
+socket demultiplexes many SSRCs; every channel on the same multicast
+group shares one kernel copy and one thread. Use this for 10+
+channels to avoid the N-socket per-packet-copy cost.
+
+```python
+MultiStream(
+    control,
+    drop_timeout_sec=15.0,
+    restore_interval_sec=5.0,
+    deliver_interval_packets=10,
+    samples_per_packet=320,
+    resequence_buffer_size=64,
+)
+```
+
+- `add_channel(frequency_hz, preset="usb", sample_rate=12000, encoding=0, agc_enable=0, gain=0.0, on_samples=None, on_stream_dropped=None, on_stream_restored=None) -> ChannelInfo`
+  — provisions one channel (via `ensure_channel()`) and registers
+  its callbacks. Must be called before `start()`. Raises `ValueError`
+  if the new channel resolves to a different multicast group from
+  already-added channels.
+- `start()` — bind the shared socket, launch receive + health threads.
+- `stop()` — stop threads, flush per-channel resequencers, close socket.
+
+```python
+multi = MultiStream(control)
+for freq in (14.074e6, 7.074e6, 3.573e6):
+    multi.add_channel(frequency_hz=freq, preset="usb",
+                      sample_rate=12000, encoding=1,
+                      on_samples=lambda s, q, f=freq: handle(f, s, q))
+multi.start()
+```
+
+### `StreamQuality`, `GapSource`, `GapEvent`
+
+Source: [stream_quality.py](../ka9q/stream_quality.py). Delivered to
+every `on_samples` callback.
+
+```python
+@dataclass
+class StreamQuality:
+    # per-batch
+    batch_start_sample: int
+    batch_samples_delivered: int
+    batch_gaps: List[GapEvent]
+    # cumulative
+    total_samples_delivered: int
+    total_samples_expected: int
+    total_gaps_filled: int
+    total_gap_events: int
+    # RTP stats
+    rtp_packets_received: int
+    rtp_packets_expected: int
+    rtp_packets_lost: int
+    rtp_packets_late: int
+    rtp_packets_duplicate: int
+    rtp_packets_resequenced: int
+    # timing
+    stream_start_utc: str
+    last_packet_utc: str
+    first_rtp_timestamp: int
+    last_rtp_timestamp: int
+    sample_rate: int
+```
+
+Properties: `completeness_pct`, `has_gaps`. Methods: `to_dict()`,
+`copy()`.
+
+`GapSource` enum: `NETWORK_LOSS`, `RESEQUENCE_TIMEOUT`,
+`EMPTY_PAYLOAD`, `STREAM_START`, `STREAM_INTERRUPTION`. Applications
+may define their own gap kinds separately.
+
+`GapEvent(source, position_samples, duration_samples, timestamp_utc,
+packets_affected=0)` — one contiguous zero-fill region.
+
+### `PacketResequencer`, `RTPPacket`, `ResequencerStats`
+
+Source: [resequencer.py](../ka9q/resequencer.py). Lower-level
+building block that `RadiodStream` and `MultiStream` share. You'll
+only use it directly if you're writing a new stream layer.
+
+```python
+PacketResequencer(buffer_size=64, samples_per_packet=320, sample_rate=16000)
+
+# per packet:
+samples, gap_events = reseq.process_packet(RTPPacket(...))
+# shutdown:
+final_samples, final_gaps = reseq.flush()
+```
+
+Also: `reset()`, `get_stats() -> dict`. Signed 32-bit arithmetic
+tolerates RTP timestamp wrap. Fragmented IQ packets are handled by
+using the *actual* sample count per packet, not the nominal one.
+
+`RTPPacket(sequence, timestamp, ssrc, samples, wallclock=None)` —
+parsed packet ready for the resequencer.
+
+`ResequencerStats` — `packets_received`, `packets_resequenced`,
+`packets_duplicate`, `gaps_detected`, `samples_output`,
+`samples_filled`. Use `.to_dict()` for JSON.
 
 ---
 
 ## RTP Recording
 
-**New in v2.4.0**
+Source: [rtp_recorder.py](../ka9q/rtp_recorder.py). Packet-oriented
+interface for applications that need per-packet control and precise
+GPS-referenced timing (WSPR, FT8, scientific capture).
 
-Generic RTP recorder with timing support, state machine, and validation.
-
-### RTPRecorder Class
+### `RTPRecorder`
 
 ```python
-RTPRecorder(channel: ChannelInfo,
-            on_packet: Optional[Callable] = None,
-            on_state_change: Optional[Callable] = None,
-            on_recording_start: Optional[Callable] = None,
-            on_recording_stop: Optional[Callable] = None,
-            max_packet_gap: int = 10,
-            resync_threshold: int = 5,
-            pass_all_packets: bool = False)
-```
-
-**Parameters:**
-- `channel` (ChannelInfo): Channel with RTP stream details and timing
-- `on_packet` (Callable, optional): `func(header, payload, wallclock_time)` called for each packet
-- `on_state_change` (Callable, optional): `func(old_state, new_state)` called on state changes
-- `on_recording_start` (Callable, optional): `func()` called when recording begins
-- `on_recording_stop` (Callable, optional): `func(metrics)` called when recording ends
-- `max_packet_gap` (int): Max sequence gap before triggering resync (default: 10, ignored if `pass_all_packets=True`)
-- `resync_threshold` (int): Good packets needed to recover from resync (default: 5)
-- `pass_all_packets` (bool): If True, pass ALL packets to callback regardless of sequence errors (default: False). Metrics still track errors. Use when downstream has its own resequencer.
-
-**Example:**
-```python
-from ka9q import discover_channels, RTPRecorder
-
-# Get channel
-channels = discover_channels("radiod.local")
-channel = channels[14074000]
-
-# Define callback
-def handle_packet(header, payload, wallclock):
-    print(f"Packet at {wallclock}: {len(payload)} bytes")
-
-# Create recorder
-recorder = RTPRecorder(channel=channel, on_packet=handle_packet)
-
-# Start and record
-recorder.start()              # IDLE → ARMED
-recorder.start_recording()    # ARMED → RECORDING
-time.sleep(60)
-recorder.stop_recording()     # RECORDING → ARMED
-recorder.stop()               # ARMED → IDLE
-```
-
-**Example with External Resequencer:**
-```python
-# When using external packet resequencing (e.g., PacketResequencer),
-# pass all packets and let downstream handle ordering
-recorder = RTPRecorder(
-    channel=channel,
-    on_packet=my_resequencer.add_packet,
-    pass_all_packets=True  # Bypass internal resync, pass all packets
+RTPRecorder(
+    channel: ChannelInfo,
+    on_packet: Callable[[RTPHeader, bytes, float], None] | None = None,
+    on_state_change: Callable[[RecorderState, RecorderState], None] | None = None,
+    on_recording_start: Callable[[], None] | None = None,
+    on_recording_stop: Callable[[RecordingMetrics], None] | None = None,
+    max_packet_gap: int = 10,
+    resync_threshold: int = 5,
+    pass_all_packets: bool = False,
 )
-
-# Now all packets (regardless of sequence gaps) are delivered to callback
-# Metrics still track sequence_errors and packets_dropped for monitoring
 ```
 
-**New in v2.5.0**: `pass_all_packets` parameter for external resequencing
+- `start()` / `stop()` — open/close the multicast socket and thread.
+- `start_recording()` / `stop_recording()` — arm/disarm the state
+  machine (IDLE → ARMED → RECORDING → RESYNC).
+- `get_metrics() -> dict` / `reset_metrics()`.
+
+`on_packet(header, payload, wallclock)` is called for every validated
+packet. `wallclock` is a Unix-time float computed from radiod's
+`GPS_TIME`/`RTP_TIMESNAP`, minus any chain-delay correction on
+`ChannelInfo`.
+
+### `RecorderState`
+
+Enum: `IDLE`, `ARMED`, `RECORDING`, `RESYNC`.
+
+### `RTPHeader`
+
+`NamedTuple`: `version, padding, extension, csrc_count, marker,
+payload_type, sequence, timestamp, ssrc`.
+
+### `RecordingMetrics`
+
+Dataclass: `packets_received`, `packets_dropped`,
+`packets_out_of_order`, `bytes_received`, `sequence_errors`,
+`timestamp_jumps`, `state_changes`, `recording_start_time`,
+`recording_stop_time`. `to_dict()` adds `recording_duration`.
+
+### Module-level helpers
+
+```python
+parse_rtp_header(data: bytes) -> Optional[RTPHeader]
+rtp_to_wallclock(rtp_timestamp: int, channel: ChannelInfo) -> Optional[float]
+```
+
+`rtp_to_wallclock()` returns `None` unless `channel.gps_time` and
+`channel.rtp_timesnap` are both populated. When
+`channel.chain_delay_correction_ns` is set (see below), it is
+subtracted from the computed wallclock.
 
 ---
 
-### RTPRecorder Methods
+## L6 BPSK PPS Calibration
 
-#### `start()`
+Source: [pps_calibrator.py](../ka9q/pps_calibrator.py). Measures the
+end-to-end RF→ADC→DSP→RTP chain delay on a radiod instance by
+detecting PPS phase flips on a BPSK IQ channel injected by a local
+GPS-disciplined transmitter. The result is a single nanosecond
+correction that applies to every channel on that radiod.
 
-Start receiving RTP packets (transitions to ARMED state).
-
-```python
-start() → None
-```
-
-#### `stop()`
-
-Stop receiving RTP packets (transitions to IDLE state).
+### `BpskPpsCalibrator`
 
 ```python
-stop() → None
-```
-
-#### `start_recording()`
-
-Begin recording (transitions from ARMED to RECORDING).
-
-```python
-start_recording() → None
-```
-
-#### `stop_recording()`
-
-Stop recording (transitions back to ARMED).
-
-```python
-stop_recording() → None
-```
-
-#### `get_metrics()`
-
-Get current recording metrics.
-
-```python
-get_metrics() → Dict[str, Any]
-```
-
-**Returns:** Dictionary with keys:
-- `packets_received`: Total packets received
-- `packets_dropped`: Packets dropped due to gaps
-- `packets_out_of_order`: Out of sequence packets
-- `bytes_received`: Total bytes received
-- `sequence_errors`: Sequence validation errors
-- `timestamp_jumps`: Large timestamp discontinuities
-- `state_changes`: Number of state transitions
-- `recording_duration`: Duration in seconds (if recording stopped)
-
-#### `reset_metrics()`
-
-Reset all metrics to zero.
-
-```python
-reset_metrics() → None
-```
-
----
-
-### RecorderState Enum
-
-```python
-from ka9q import RecorderState
-
-RecorderState.IDLE       # Not recording
-RecorderState.ARMED      # Waiting for trigger
-RecorderState.RECORDING  # Actively recording
-RecorderState.RESYNC     # Lost sync, recovering
-```
-
-**State Machine:**
-```
-        start()           start_recording()
-IDLE ──────────> ARMED ──────────────────> RECORDING
-  ^                ^                            │
-  │                │                            │ (gap > threshold)
-  │                │                            v
-  └── stop() ──────┴────── stop_recording() ─ RESYNC
-                                                 │
-                                                 │ (N good packets)
-                                                 └──────> RECORDING
-```
-
----
-
-### RTP Timing Functions
-
-#### `parse_rtp_header()`
-
-Parse RTP packet header (RFC 3550).
-
-```python
-parse_rtp_header(data: bytes) → Optional[RTPHeader]
-```
-
-**Parameters:**
-- `data` (bytes): Raw packet bytes (minimum 12 bytes)
-
-**Returns:**
-- `RTPHeader` if valid, None if invalid
-
-**Example:**
-```python
-from ka9q import parse_rtp_header
-
-data = sock.recvfrom(8192)[0]
-header = parse_rtp_header(data)
-if header:
-    print(f"Sequence: {header.sequence}")
-    print(f"Timestamp: {header.timestamp}")
-    print(f"SSRC: {header.ssrc}")
-```
-
----
-
-#### `rtp_to_wallclock()`
-
-Convert RTP timestamp to Unix wall-clock time.
-
-```python
-rtp_to_wallclock(rtp_timestamp: int, channel: ChannelInfo) → Optional[float]
-```
-
-**Parameters:**
-- `rtp_timestamp` (int): RTP timestamp from packet header
-- `channel` (ChannelInfo): Channel with `gps_time`, `rtp_timesnap`, `sample_rate`
-
-**Returns:**
-- `float`: Unix timestamp (seconds since 1970-01-01) or None if timing unavailable
-
-**Example:**
-```python
-from ka9q import rtp_to_wallclock, parse_rtp_header
-import time
-
-data = sock.recvfrom(8192)[0]
-header = parse_rtp_header(data)
-
-timestamp = rtp_to_wallclock(header.timestamp, channel)
-if timestamp:
-    print(f"Packet time: {time.ctime(timestamp)}")
-```
-
-**Formula:**
-```
-wall_time = gps_time + (rtp_timestamp - rtp_timesnap) / sample_rate
-```
-
----
-
-### RTPHeader NamedTuple
-
-```python
-from ka9q import RTPHeader
-
-@dataclass
-class RTPHeader:
-    version: int          # RTP version (should be 2)
-    padding: bool         # Padding flag
-    extension: bool       # Extension flag
-    csrc_count: int       # CSRC count
-    marker: bool          # Marker bit
-    payload_type: int     # Payload type
-    sequence: int         # Sequence number (0-65535)
-    timestamp: int        # RTP timestamp
-    ssrc: int             # Synchronization source
-```
-
----
-
-### RecordingMetrics Dataclass
-
-```python
-from ka9q import RecordingMetrics
-
-@dataclass
-class RecordingMetrics:
-    packets_received: int = 0
-    packets_dropped: int = 0
-    packets_out_of_order: int = 0
-    bytes_received: int = 0
-    sequence_errors: int = 0
-    timestamp_jumps: int = 0
-    state_changes: int = 0
-    recording_start_time: Optional[float] = None
-    recording_stop_time: Optional[float] = None
-    
-    def to_dict() → dict:
-        """Convert to dictionary with calculated fields"""
-```
-
----
-
-### Complete Recording Example
-
-```python
-from ka9q import (
-    discover_channels,
-    RTPRecorder,
-    RecorderState,
-    RTPHeader,
-    RecordingMetrics
+BpskPpsCalibrator(
+    sample_rate: int,
+    consecutive_required: int = 10,
+    edge_tolerance_samples: int = 10,
+    min_pulse_fraction: float = 0.99,
+    enable_notch_500hz: bool = False,
 )
-import time
-
-class MyRecorder:
-    def __init__(self):
-        self.packets = []
-    
-    def on_packet(self, header: RTPHeader, payload: bytes, wallclock: float):
-        """Store packet data"""
-        self.packets.append({
-            'time': wallclock,
-            'sequence': header.sequence,
-            'data': payload
-        })
-    
-    def on_state_change(self, old: RecorderState, new: RecorderState):
-        print(f"State: {old.value} → {new.value}")
-    
-    def on_recording_start(self):
-        print("🔴 Recording started")
-        self.packets = []
-    
-    def on_recording_stop(self, metrics: RecordingMetrics):
-        print(f"⏹️  Recorded {len(self.packets)} packets")
-        print(f"Duration: {metrics.recording_duration:.2f}s")
-
-# Discover channels
-channels = discover_channels("radiod.local")
-channel = channels[14074000]
-
-# Create application and recorder
-app = MyRecorder()
-recorder = RTPRecorder(
-    channel=channel,
-    on_packet=app.on_packet,
-    on_state_change=app.on_state_change,
-    on_recording_start=app.on_recording_start,
-    on_recording_stop=app.on_recording_stop
-)
-
-# Record
-recorder.start()
-recorder.start_recording()
-time.sleep(60)
-recorder.stop_recording()
-recorder.stop()
-
-# Process packets
-for pkt in app.packets:
-    print(f"Packet at {pkt['time']}: {len(pkt['data'])} bytes")
 ```
 
-**See also:**
-- `docs/RTP_TIMING_SUPPORT.md` - Detailed timing documentation
-- `examples/rtp_recorder_example.py` - Complete working example
-- `examples/test_timing_fields.py` - Verify timing fields
+- `process_samples(iq_samples: np.ndarray, rtp_timestamp: int) -> Optional[PpsCalibrationResult]`
+  — feed one batch of complex64 IQ; returns a result once locked.
+- `locked -> bool` — property, `True` once `pps_consecutive >= consecutive_required`.
+- `reset()` — wipe state if the stream restarted.
+
+### `PpsCalibrationResult`
+
+Dataclass: `chain_delay_ns`, `chain_delay_samples`, `pps_ok`,
+`pps_noise`, `pps_consecutive`, `locked`.
+
+### `NotchFilter500Hz`
+
+`NotchFilter500Hz(sample_rate, pole_radius=0.99)`. Stateful biquad
+IIR notch at 500 Hz; exposed separately for callers who want to
+pre-filter IQ before passing to other detectors. Call
+`.process(iq_samples) -> np.ndarray`.
+
+```python
+cal = BpskPpsCalibrator(sample_rate=24000)
+def on_samples(samples, quality):
+    r = cal.process_samples(samples, quality.last_rtp_timestamp)
+    if r is not None:
+        for ch in other_channels:
+            ch.chain_delay_correction_ns = r.chain_delay_ns
+```
 
 ---
 
-## Constants
+## Utilities
 
-### StatusType
+### `generate_multicast_ip`
 
-All radiod protocol type identifiers (110+ constants).
-
-**Common Constants:**
+Source: [addressing.py](../ka9q/addressing.py).
 
 ```python
-from ka9q import StatusType
-
-StatusType.EOL = 0                    # End of list marker
-StatusType.COMMAND_TAG = 1            # Command tag for matching responses
-StatusType.OUTPUT_SSRC = 18           # Channel SSRC
-StatusType.OUTPUT_SAMPRATE = 20       # Sample rate
-StatusType.RADIO_FREQUENCY = 33       # RF frequency
-StatusType.LOW_EDGE = 39              # Low filter edge
-StatusType.HIGH_EDGE = 40             # High filter edge
-StatusType.BASEBAND_POWER = 46        # Baseband power
-StatusType.NOISE_DENSITY = 47         # Noise density
-StatusType.DEMOD_TYPE = 48            # Demodulation type (0=linear, 1=FM)
-StatusType.AGC_ENABLE = 62            # AGC enable/disable
-StatusType.GAIN = 68                  # Manual gain
-StatusType.PRESET = 85                # Mode/preset name
-StatusType.RF_ATTEN = 97              # RF attenuation
-StatusType.RF_GAIN = 98               # RF gain
-StatusType.RF_AGC = 99                # RF AGC status
-StatusType.OUTPUT_ENCODING = 107      # Output encoding type
+generate_multicast_ip(unique_id: str, prefix: str = "239",
+                      *, radiod_host: Optional[str] = None) -> str
 ```
 
-**See**: `ka9q/types.py` for complete list
+Deterministic multicast IPv4 from a SHA-256 hash of `unique_id`
+(optionally combined with `radiod_host`). Collision probability is
+≈1 in 16.7M. Pass `radiod_host` when one client talks to multiple
+radiod instances.
 
----
+### `ChannelMonitor`
 
-### Encoding
-
-Output encoding type constants.
+Source: [monitor.py](../ka9q/monitor.py). Background watchdog that
+keeps a set of "desired" channels alive through radiod restarts,
+without the callback overhead of `ManagedStream`.
 
 ```python
-from ka9q import Encoding
-
-Encoding.NO_ENCODING = 0
-Encoding.S16BE = 1          # Signed 16-bit big-endian
-Encoding.S16LE = 2          # Signed 16-bit little-endian
-Encoding.F32 = 3            # 32-bit float
-Encoding.F16 = 4            # 16-bit float
-Encoding.OPUS = 5           # Opus codec
+monitor = ChannelMonitor(control, check_interval=2.0)
+monitor.start()
+ssrc = monitor.monitor_channel(frequency_hz=14.074e6,
+                               preset="usb", sample_rate=12000)
+# ...later...
+monitor.unmonitor_channel(ssrc)
+monitor.stop()
 ```
 
-**Example:**
+Every `check_interval` seconds the monitor runs `discover_channels()`
+and calls `control.ensure_channel(**params)` for anything that's
+missing.
+
+### `allocate_ssrc`
+
+See [RadiodControl](#allocate_ssrc-module-level) above.
+
+### `KA9Q_RADIO_COMMIT`
+
+From [compat.py](../ka9q/compat.py). String giving the ka9q-radio
+git commit this release of ka9q-python was validated against. Used
+by `ka9q-update` and other deployment tooling to detect drift.
+
 ```python
-status = control.tune(ssrc=10000, encoding=Encoding.F32)
+from ka9q import KA9Q_RADIO_COMMIT
+print(f"Tested against ka9q-radio {KA9Q_RADIO_COMMIT}")
 ```
 
 ---
 
 ## Exceptions
 
-### Ka9qError
+Source: [exceptions.py](../ka9q/exceptions.py). All derive from
+`Ka9qError`.
 
-Base exception for all ka9q-python errors.
+| Class | Raised when |
+|---|---|
+| `Ka9qError` | Base class; catch this to catch everything from the library. |
+| `ConnectionError` | `RadiodControl` cannot reach radiod (DNS, socket, etc.). |
+| `CommandError` | A TLV command was rejected or the socket errored. |
+| `ValidationError` | A parameter failed input validation (frequency range, SSRC range, preset name, multicast address format, ...). |
 
-```python
-class Ka9qError(Exception):
-    """Base exception for all ka9q errors"""
-```
-
----
-
-### ConnectionError
-
-Failed to connect to radiod.
-
-```python
-class ConnectionError(Ka9qError):
-    """Failed to connect to radiod"""
-```
-
-**Causes:**
-- Cannot resolve address
-- Network unreachable
-- Socket creation failure
-- Multicast join failure
+Note: `ConnectionError` shadows the built-in; import as
+`ka9q.ConnectionError` or alias to avoid confusion.
 
 ---
 
-### CommandError
+## CLI: `ka9q`
 
-Failed to send command to radiod.
+Installed as a console script (also `python -m ka9q.cli`). Source:
+[cli.py](../ka9q/cli.py). Every subcommand takes a radiod host as its
+first positional argument.
 
-```python
-class CommandError(Ka9qError):
-    """Failed to send command to radiod"""
+```
+ka9q [--interface IFACE] <list | query | set | tui> ...
 ```
 
-**Causes:**
-- Socket error during send
-- Network failure
-- All retries exhausted
+### `ka9q list HOST`
 
----
+Discover channels via multicast.
 
-### ValidationError
+```
+ka9q list HOST [--timeout SEC] [--json]
+```
+Prints an `SSRC | Frequency | Preset | Dest` table, or a JSON array
+with `--json`.
 
-Invalid parameter or configuration.
+### `ka9q query HOST`
 
-```python
-class ValidationError(Ka9qError):
-    """Invalid parameter or configuration"""
+Poll or watch typed status. Every `ChannelStatus` field (including
+nested sub-structures) is addressable with `--field DOTTED.PATH`.
+
+```
+ka9q query HOST --ssrc N
+ka9q query HOST --ssrc N --field pll.lock
+ka9q query HOST --ssrc N --field frontend.calibrate --json
+ka9q query HOST --watch                    # stream all SSRCs
+ka9q query HOST --ssrc N --watch           # stream one SSRC
 ```
 
-**Causes:**
-- SSRC out of range (must be 0-4294967295)
-- Frequency out of range
-- Sample rate invalid (must be positive)
-- Gain out of range
-- Timeout not positive
+Flags: `--ssrc N`, `--field PATH`, `--json`, `--watch`,
+`--timeout SEC` (default 2.0).
 
----
+Without `--field` the command prints a multi-section human-readable
+render (tuning / frontend / signal / filter / demod-specific /
+squelch / output / Opus / TP).
 
-### DiscoveryError
+### `ka9q set HOST --ssrc N PARAM VALUE`
 
-Failed to discover radiod services or channels.
+Change one parameter. `PARAM` is one of:
 
-```python
-class DiscoveryError(Ka9qError):
-    """Failed to discover radiod services or channels"""
+```
+frequency preset mode sample-rate samprate low-edge high-edge
+kaiser-beta shift gain output-level headroom
+agc agc-hangtime agc-recovery agc-threshold
+rf-gain rf-atten
+squelch-open squelch-close snr-squelch
+pll pll-bw pll-square isb envelope
+channels encoding demod-type pl-tone threshold-extend
+lock description first-lo status-interval max-delay
+opus-bitrate opus-dtx opus-application opus-bandwidth opus-fec
+window destination
 ```
 
----
+Each verb maps to a `RadiodControl` setter. Booleans accept
+`1/0/true/false/yes/no/on/off`. Encoding / demod-type / window
+accept either their integer value or the symbolic name (e.g.
+`encoding S16LE`, `demod-type FM`).
 
-## Utility Functions
-
-### resolve_multicast_address()
-
-Resolve hostname or mDNS address to IP for multicast operations.
-
-```python
-from ka9q.utils import resolve_multicast_address
-
-resolve_multicast_address(address: str, timeout: float = 5.0) → str
+```
+ka9q set radiod.local --ssrc 12345678 frequency 14074000
+ka9q set radiod.local --ssrc 12345678 encoding S16LE
+ka9q set radiod.local --ssrc 12345678 pll true
+ka9q set radiod.local --ssrc 12345678 destination 239.1.2.3:5004
 ```
 
-**Parameters:**
-- `address` (str): Hostname, .local mDNS name, or IP address
-- `timeout` (float): Resolution timeout in seconds (default: 5.0)
+### `ka9q tui [HOST]`
 
-**Returns:**
-- `str`: Resolved IP address
+Launch the Textual-based TUI (requires the optional `[tui]` extra).
 
-**Raises:**
-- `Exception`: If resolution fails after trying all methods
-
-**Example:**
-```python
-ip = resolve_multicast_address("radiod.local")
-print(ip)  # "239.251.200.193"
+```
+ka9q tui HOST [--ssrc N]
 ```
 
----
-
-### validate_multicast_address()
-
-Validate that an address is a valid multicast address.
-
-```python
-from ka9q.utils import validate_multicast_address
-
-validate_multicast_address(address: str) → bool
-```
-
-**Parameters:**
-- `address` (str): IP address string to validate
-
-**Returns:**
-- `bool`: True if valid multicast address (224.0.0.0 to 239.255.255.255)
-
-**Example:**
-```python
-is_mcast = validate_multicast_address("239.251.200.193")
-print(is_mcast)  # True
-```
-
----
-
-## Parameter Ranges and Limits
-
-### Valid Ranges
-
-| Parameter | Type | Min | Max | Notes |
-|-----------|------|-----|-----|-------|
-| `ssrc` | int | 0 | 4294967295 | 32-bit unsigned integer |
-| `frequency_hz` | float | 0 | 10e12 | 10 THz practical limit |
-| `sample_rate` | int | 1 | 100e6 | 100 MHz practical limit |
-| `gain_db` | float | -100 | +100 | Typical SDR range |
-| `timeout` | float | >0 | unlimited | Seconds |
-
-### Conventions
-
-**SSRC Selection:**
-- **Recommended**: Use frequency in Hz as SSRC
-- Example: For 14.074 MHz, use SSRC = 14074000
-- Must be unique per channel
-
-**Frequency Units:**
-- Always in Hz (not MHz or kHz)
-- Example: 14.074 MHz = 14.074e6 Hz = 14074000 Hz
-
-**Sample Rate Values:**
-- Typical: 12000, 16000, 24000, 48000
-- Must match your application's needs
-- Higher rates = more CPU/bandwidth
-
-**Preset/Mode Names:**
-- "iq" - I/Q linear mode (wideband)
-- "usb" - Upper sideband
-- "lsb" - Lower sideband
-- "am" - Amplitude modulation
-- "fm" - Frequency modulation (narrowband)
-- "cw" - Continuous wave (Morse code)
-
----
-
-## Thread Safety
-
-**Thread-Safe Methods:**
-- ✅ All `RadiodControl` public methods
-- ✅ `send_command()`
-- ✅ `tune()`
-- ✅ `close()`
-
-**Not Thread-Safe:**
-- Discovery functions (call from single thread or synchronize externally)
-
-**Example Multi-Threaded Usage:**
-```python
-control = RadiodControl("radiod.local")
-
-def worker(freq):
-    control.set_frequency(ssrc=10000, frequency_hz=freq)
-
-from threading import Thread
-threads = [Thread(target=worker, args=(f,)) for f in [14.074e6, 14.095e6]]
-for t in threads:
-    t.start()
-for t in threads:
-    t.join()
-
-control.close()
-```
-
----
-
-## Error Handling Best Practices
-
-### Always Catch Specific Exceptions
-
-```python
-from ka9q import RadiodControl, ValidationError, ConnectionError, CommandError
-
-try:
-    with RadiodControl("radiod.local") as control:
-        control.create_channel(ssrc=10000, frequency_hz=14.074e6)
-except ValidationError as e:
-    print(f"Invalid parameters: {e}")
-except ConnectionError as e:
-    print(f"Connection failed: {e}")
-except CommandError as e:
-    print(f"Command failed: {e}")
-```
-
-### Use Context Manager
-
-```python
-# GOOD: Automatic cleanup
-with RadiodControl("radiod.local") as control:
-    control.create_channel(...)
-
-# AVOID: Manual cleanup
-control = RadiodControl("radiod.local")
-try:
-    control.create_channel(...)
-finally:
-    control.close()
-```
-
-### Validate Before Sending
-
-```python
-# Input validation happens automatically
-control.create_channel(ssrc=-1, ...)  # Raises ValidationError immediately
-```
-
----
-
-## Version Information
-
-```python
-import ka9q
-print(ka9q.__version__)  # "2.2.0"
-print(ka9q.__author__)   # "Michael Hauan AC0G"
-```
-
----
-
-## What's New in v2.2.0
-
-### Security Enhancements
-- **Cryptographic random numbers**: Command tags use `secrets.randbits()` instead of `random.randint()`
-- **Input validation**: Comprehensive validation for all string parameters
-- **Bounds checking**: All TLV decoders validate data before processing
-- **Resource cleanup**: Improved error handling and socket cleanup
-
-### Rate Limiting & Observability
-- **Rate limiting**: `max_commands_per_sec` parameter (default: 100)
-- **Metrics tracking**: `get_metrics()` and `reset_metrics()` methods
-- **DoS prevention**: Automatic command rate enforcement
-
-### Channel Lifecycle
-- **Channel cleanup**: `remove_channel()` method for proper resource management
-- Essential for long-running applications
-
-### Documentation
-- Comprehensive security considerations
-- Channel cleanup best practices
-- Enhanced API documentation
-
----
-
-*For architecture details, see [ARCHITECTURE.md](ARCHITECTURE.md)*  
-*For user guide, see [README.md](README.md)*  
-*For installation, see [INSTALLATION.md](INSTALLATION.md)*
+If `HOST` is omitted, the TUI presents the mDNS-discovered radiod
+services from `discover_radiod_services()`.

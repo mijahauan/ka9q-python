@@ -8,7 +8,7 @@ Welcome to **ka9q-python**, a general-purpose Python library for controlling [ka
 
 Before you begin, ensure you have the following:
 
-1. **Python 3.7 or later** installed on your system.
+1. **Python 3.9 or later** installed on your system.
 2. **A running instance of `ka9q-radio`** (specifically, the `radiod` daemon) accessible on your network.
 3. **Basic knowledge of Python programming** (variables, functions, imports).
 
@@ -146,15 +146,29 @@ This is useful for monitoring what's already running, or for connecting to a cha
 
 ### 4. Stream Abstraction Layers
 
-`ka9q-python` offers three levels of abstraction for consuming RTP streams:
+`ka9q-python` offers four ways to consume RTP streams. Pick the one that matches your use case:
 
 | Layer | Class | Use Case |
 | :--- | :--- | :--- |
-| **Low-Level** | `RTPRecorder` | Direct access to RTP packets with precise timing. For advanced users who need full control. |
-| **Mid-Level** | `RadiodStream` | Continuous sample delivery with automatic gap filling and quality metrics. Ideal for most applications. |
-| **High-Level** | `ManagedStream` | Self-healing stream that automatically recovers from `radiod` restarts. Best for long-running, unattended applications. |
+| **Low-Level** | `RTPRecorder` | Direct access to RTP packets with precise GPS timing. For recorders and timing-critical work. |
+| **Mid-Level** | `RadiodStream` | Continuous sample delivery with automatic gap filling and quality metrics. |
+| **High-Level, one channel** | `ManagedStream` | Self-healing single-channel stream. Recovers from `radiod` restarts. Best for SWL-style apps. |
+| **High-Level, many channels** | `MultiStream` | Shared-socket receiver for many SSRCs on the same multicast group. Best for fixed-channel pipelines (WSPR, PSK, FT8, timing). See [MULTI_STREAM.md](MULTI_STREAM.md). |
 
-**For most users, we recommend starting with `ManagedStream`.**
+**Start with `ManagedStream` for one channel; switch to `MultiStream` once you need ~5+ channels on the same group.**
+
+### 5. The `ka9q` CLI and TUI
+
+For interactive work, the package ships a command-line tool:
+
+```bash
+ka9q list  radiod.local                     # enumerate active channels
+ka9q query radiod.local --ssrc 14074000     # dump a channel's status
+ka9q set   radiod.local --ssrc 14074000 frequency 14095600
+ka9q tui   radiod.local                     # Textual terminal UI
+```
+
+See [CLI_GUIDE.md](CLI_GUIDE.md) and [TUI_GUIDE.md](TUI_GUIDE.md).
 
 ---
 

@@ -219,7 +219,8 @@ def _parse_addr(v: str):
 # ---------------------------------------------------------------------------
 
 def cmd_list(args: argparse.Namespace) -> int:
-    channels = discover_channels(args.host, timeout=args.timeout)
+    channels_map = discover_channels(args.host, listen_duration=args.timeout)
+    channels = list(channels_map.values())
     if args.json:
         print(json.dumps([asdict(c) if is_dataclass(c) else c.__dict__ for c in channels],
                          default=_json_default, indent=2))

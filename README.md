@@ -23,15 +23,15 @@ Control radiod channels for any application: AM/FM/SSB radio, WSPR monitoring, S
 
 ## Features
 
-✅ **Zero assumptions** - Works for any SDR application  
-✅ **Complete API** - All 85+ radiod parameters exposed  
-✅ **Channel control** - Create, configure, discover channels  
-✅ **RTP recording** - Generic recorder with timing support and state machine  
-✅ **Precise timing** - GPS_TIME/RTP_TIMESNAP for accurate timestamps  
-✅ **Multi-homed support** - Works on systems with multiple network interfaces  
-✅ **Pure Python** - No compiled dependencies  
-✅ **Well tested** - Comprehensive test coverage  
-✅ **Documented** - Comprehensive examples and API reference included  
+- **Complete radiod API** — all 110+ TLV status/command parameters exposed, generated from ka9q-radio's C headers
+- **Four stream abstractions** — `RTPRecorder` (raw packets), `RadiodStream` (samples + gap handling), `ManagedStream` (self-healing single channel), `MultiStream` (shared socket, many SSRCs)
+- **Typed status decoder** — `ChannelStatus`, `FrontendStatus`, `PllStatus`, etc. with dotted-path field access
+- **Precise RTP timing** — GPS_TIME / RTP_TIMESNAP for sample-accurate wallclock timestamps
+- **LAN discovery** — enumerate radiod instances and their active channels via mDNS
+- **CLI + TUI** — `ka9q list / query / set / tui` for interactive and scripted control
+- **Multi-homed** — explicit interface selection for hosts with multiple NICs
+- **Protocol drift detection** — pinned to a specific ka9q-radio commit, with a sync script
+- **Pure Python** — NumPy is the only runtime dependency
 
 ## Installation
 
@@ -178,6 +178,7 @@ monitor.monitor_channel(
     preset="usb",
     sample_rate=12000
 )
+```
 
 ### Channel Cleanup (frequency = 0)
 
@@ -256,63 +257,39 @@ It auto-skips if `../ka9q-radio` is not present, so CI environments without the 
 
 ## Documentation
 
-For detailed information, please refer to the documentation in the `docs/` directory:
-
-- **[API Reference](docs/API_REFERENCE.md)**: Full details on all classes, methods, and functions.
-- **[TUI Guide](docs/TUI_GUIDE.md)**: Launching and using the `ka9q tui` Textual terminal UI.
-- **[RTP Timing Support](docs/RTP_TIMING_SUPPORT.md)**: Guide to RTP timing and synchronization.
-- **[Architecture](docs/ARCHITECTURE.md)**: Overview of the library's design and structure.
-- **[Installation Guide](docs/INSTALLATION.md)**: Detailed installation instructions.
-- **[Testing Guide](docs/TESTING_GUIDE.md)**: Information on how to run the test suite.
-- **[Security Considerations](docs/SECURITY.md)**: Important security information regarding the ka9q-radio protocol.
-- **[Changelog](docs/CHANGELOG.md)**: A log of all changes for each version.
-- **[Release Notes](docs/releases/)**: Release-specific notes and instructions.
+- **[Getting Started](docs/GETTING_STARTED.md)** — first-run walkthrough
+- **[Recipes](docs/RECIPES.md)** — task-oriented cookbook: LAN probing, fixed-channel pipelines (WSPR/PSK/FT8/timing), nimble SWL-style retuning, and using ka9q-python across different SDRs
+- **[API Reference](docs/API_REFERENCE.md)** — every public class, method, and function
+- **[Architecture](docs/ARCHITECTURE.md)** — module layout, threading, protocol
+- **[CLI Guide](docs/CLI_GUIDE.md)** — `ka9q list / query / set / tui` command reference
+- **[TUI Guide](docs/TUI_GUIDE.md)** — the Textual terminal UI
+- **[MultiStream Guide](docs/MULTI_STREAM.md)** — shared-socket multi-channel receiver
+- **[RTP Timing](docs/RTP_TIMING_SUPPORT.md)** — GPS_TIME / RTP_TIMESNAP for sample-accurate timestamps
+- **[Installation](docs/INSTALLATION.md)** · **[Testing](docs/TESTING_GUIDE.md)** · **[Security](docs/SECURITY.md)**
+- **[Changelog](CHANGELOG.md)**
 
 ## Examples
 
-See the `examples/` directory for complete applications:
+See [`examples/`](examples/) for runnable scripts:
 
-- **High-Level API**: `ensure_channel()` handles the complexity of checking existing channels, creating new ones only when necessary, and verifying configurations.
-- **Destination-Aware Channels**: Support for unique per-application multicast destinations and deterministic IP generation.
-- **Stream Sharing**: Deterministic SSRC allocation allows multiple independent applications to share `radiod` streams efficiently.
-- **`discover_example.py`** - Channel discovery methods (native Python and control utility)
-- **`tune.py`** - Interactive channel tuning utility (Python implementation of ka9q-radio's tune)
-- **`tune_example.py`** - Programmatic examples of using the tune() method
-- **`rtp_recorder_example.py`** - Complete RTP recorder with timing and state machine
-- **`test_timing_fields.py`** - Verify GPS_TIME/RTP_TIMESNAP timing fields
-- **`simple_am_radio.py`** - Minimal AM broadcast listener
-- **`superdarn_recorder.py`** - Ionospheric radar monitoring
-- **`codar_oceanography.py`** - Ocean current radar
-- **`hf_band_scanner.py`** - Dynamic frequency scanner
-- **`wspr_monitor.py`** - Weak signal propagation reporter
+- [`simple_am_radio.py`](examples/simple_am_radio.py) — minimal AM listener
+- [`discover_example.py`](examples/discover_example.py) — channel discovery on the LAN
+- [`stream_example.py`](examples/stream_example.py) — `RadiodStream` sample callback
+- [`rtp_recorder_example.py`](examples/rtp_recorder_example.py) — precise-timing RTP recorder
+- [`multi_stream_smoke.py`](examples/multi_stream_smoke.py) — `MultiStream` multi-SSRC receiver
+- [`hf_band_scanner.py`](examples/hf_band_scanner.py) — dynamic band scanner
+- [`channel_cleanup_example.py`](examples/channel_cleanup_example.py) — teardown via frequency=0
+- [`tune.py`](examples/tune.py) — interactive tuning utility
+- [`superdarn_recorder.py`](examples/superdarn_recorder.py), [`codar_oceanography.py`](examples/codar_oceanography.py), [`grape_integration_example.py`](examples/grape_integration_example.py) — domain-specific recorders
 
 ## Use Cases
 
-### AM/FM/SSB Radio
-- Broadcast monitoring
-- Ham radio operation  
-- Shortwave listening
+See [docs/RECIPES.md](docs/RECIPES.md) for worked examples of:
 
-### Scientific Research
-- WSPR propagation studies
-- SuperDARN ionospheric radar
-- CODAR ocean current mapping
-- Meteor scatter
-- EME (moonbounce)
-
-### Digital Modes
-- FT8/FT4 monitoring
-- RTTY/PSK decoding
-- DRM digital radio
-- HF fax reception
-
-### Satellite Operations
-- Downlink reception
-- Doppler tracking
-- Multi-frequency monitoring
-
-### Custom Applications
-**No assumptions!** Use for anything SDR-related.
+- **LAN probing** — enumerate radiod instances and their active channels
+- **Fixed-channel pipelines** — WSPR, PSK/FT8, HF timing (bundled band plans, `MultiStream`); see companion projects `wspr-recorder`, `psk-recorder`, `hf-timestd`
+- **Nimble channel switching** — single-channel SWL-style retuning driven from the CLI or an app
+- **SDR portability** — ka9q-python talks to `radiod`, which talks to the SDR; reporting frontend capabilities via `FrontendStatus`. Primary tested frontend is the RX888; AirspyR2 and Airspy HF+ support is in development.
 
 ## License
 

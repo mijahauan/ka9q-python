@@ -1,347 +1,199 @@
-# Testing Guide for Channel Operations
+# Testing Guide
 
-**Purpose:** Verify that ka9q-python can successfully create channels AND tune existing channels.
-
----
-
-## The Problem
-
-You reported that the package had issues:
-1. ❌ Tuning an established channel to a different frequency didn't work
-2. ❌ Raising or lowering the volume (gain) didn't work
-
-These are **critical functional issues** that must be fixed before the package is production-ready.
+How to run ka9q-python's test suite. Unit tests run without any
+hardware; integration tests talk to a live `radiod`.
 
 ---
 
-## What We've Created
-
-### 1. Comprehensive Test Script
-
-**`test_channel_operations.py`** - Tests the exact scenarios you described:
+## Quick reference
 
 ```bash
-python3 test_channel_operations.py radiod.local
-```
+# Unit tests only — no radiod needed
+pytest
 
-**What it tests:**
-1. ✅ **Create new channel** - Creates channel at 14.074 MHz
-2. ✅ **Re-tune frequency** - Changes to 14.076 MHz (2 kHz higher)
-3. ✅ **Change gain** - Adjusts volume from 0 dB to 10 dB
-4. ✅ **Re-tune again** - Changes to 14.070 MHz (4 kHz lower)
+# Integration tests against a live radiod
+pytest --radiod-host=bee1-hf-status.local
+RADIOD_HOST=bee1-hf-status.local pytest    # equivalent via env var
 
-**Output:**
-- Detailed status for each operation
-- Field-by-field verification
-- Pass/fail for each test
-- Diagnostic information if tests fail
+# Coverage
+pytest --cov=ka9q --cov-report=html
 
-### 2. Diagnostic Guide
+# Single file
+pytest tests/test_status_decoder.py -v
 
-**`CHANNEL_TUNING_DIAGNOSTICS.md`** - Complete troubleshooting guide:
-
-- Common issues and solutions
-- Step-by-step diagnostic procedures
-- Code examples for each scenario
-- radiod configuration checks
-- Known limitations
-
-### 3. Integration Tests
-
-**`tests/test_integration.py`** - Automated tests (already existed):
-
-```bash
-pytest tests/test_integration.py -v --radiod-host=radiod.local
-```
-
-Tests:
-- Frequency tuning
-- Gain changes
-- AGC enable/disable
-- Multiple channels
-- Re-tuning existing channels
-
----
-
-## How to Test
-
-### Quick Test (Recommended First)
-
-```bash
-cd /home/mjh/git/ka9q-python
-python3 test_channel_operations.py radiod.local
-```
-
-**Expected output if working:**
-```
-✓ TEST 1: PASSED - Channel created successfully
-✓ TEST 2: PASSED - Frequency re-tuning works
-✓ TEST 3: PASSED - Gain adjustment works
-✓ BONUS TEST: PASSED
-
-🎉 ALL TESTS PASSED!
-```
-
-**If tests fail:**
-See detailed diagnostics in output and consult `CHANNEL_TUNING_DIAGNOSTICS.md`
-
-### Detailed Integration Tests
-
-```bash
-# Run all integration tests
-pytest tests/test_integration.py -v --radiod-host=radiod.local
-
-# Run specific test class
-pytest tests/test_integration.py::TestIntegrationTuneFrequency -v --radiod-host=radiod.local
-pytest tests/test_integration.py::TestIntegrationTuneGain -v --radiod-host=radiod.local
+# Single test
+pytest tests/test_tune_method.py::TestTuneBasic::test_frequency -v
 ```
 
 ---
 
-## What Could Be Wrong
+## Setup
 
-### Possibility 1: Code Bug (Python Package)
+Install the package with dev extras:
 
-If tests fail consistently, there may be a bug in how `tune()` works.
-
-**Check for:**
-- Commands not being sent correctly
-- Response matching issues
-- Parameter encoding problems
-
-**Action:** Run with debug logging:
-```python
-import logging
-logging.basicConfig(level=logging.DEBUG)
-# Then run your tune() calls
-```
-
-### Possibility 2: radiod Configuration
-
-radiod may not support parameter changes for certain configurations.
-
-**Check:**
 ```bash
-# Test with native ka9q-radio tune utility
-tune -r radiod.local -s 99999999 -f 14.074M -m usb -v
-
-# Try changing frequency
-tune -r radiod.local -s 99999999 -f 14.076M -m usb -v
-
-# Try changing gain
-tune -r radiod.local -s 99999999 -g 10 -v
+pip install -e ".[dev]"
 ```
 
-If native `tune` doesn't work either, it's a radiod issue, not the Python package.
-
-### Possibility 3: Network/Multicast Issues
-
-Status responses may not be reaching the client.
-
-**Check:**
-```bash
-# Test multicast connectivity
-ping -c 3 239.251.200.193  # Or your multicast address
-
-# Check routing
-ip route | grep 224
-```
-
-### Possibility 4: SSRC Conflicts
-
-Using an SSRC that's already in use by another process.
-
-**Check:**
-```bash
-control -v radiod.local
-```
-
-Look for duplicate SSRCs.
+This pulls in `pytest` and `pytest-cov` (see `[project.optional-dependencies].dev`
+in [`pyproject.toml`](../pyproject.toml)).
 
 ---
 
-## Code Examples
+## Unit tests (default)
 
-### Creating a New Channel (Should Work)
+`pytest` with no arguments runs everything under `tests/`. Unit tests
+mock the network, so they run anywhere — no radiod, no multicast, no
+GPS hardware.
+
+```bash
+pytest                   # verbose output is on by default via pyproject.toml
+pytest -q                # quiet
+pytest -x                # stop at first failure
+```
+
+Expect a few hundred tests completing in under a minute.
+
+---
+
+## Integration tests
+
+Some tests require a live `radiod`. They are gated on a
+`--radiod-host` pytest flag or the `RADIOD_HOST` environment variable
+(see [`tests/conftest.py`](../tests/conftest.py)):
 
 ```python
-from ka9q import RadiodControl
-
-control = RadiodControl("radiod.local")
-
-# Create new channel
-status = control.tune(
-    ssrc=12345678,
-    frequency_hz=14.074e6,
-    preset='usb',
-    sample_rate=12000,
-    timeout=10.0
-)
-
-print(f"Created: {status.get('frequency')/1e6:.6f} MHz")
+parser.addoption("--radiod-host",
+                 default=os.environ.get("RADIOD_HOST", "bee1-hf-status.local"),
+                 ...)
 ```
 
-### Re-tuning Existing Channel (This is what was failing)
-
-```python
-# Change frequency of existing channel
-status = control.tune(
-    ssrc=12345678,  # SAME SSRC as above
-    frequency_hz=14.076e6,  # NEW frequency
-    preset='usb',
-    timeout=10.0
-)
-
-print(f"Re-tuned to: {status.get('frequency')/1e6:.6f} MHz")
-
-# Verify it changed
-if abs(status.get('frequency') - 14.076e6) < 1.0:
-    print("✓ Re-tuning worked!")
-else:
-    print("✗ Re-tuning failed - still at old frequency")
-```
-
-### Changing Gain (This is what was failing)
-
-```python
-# Change gain on existing channel
-status = control.tune(
-    ssrc=12345678,
-    frequency_hz=14.076e6,
-    preset='usb',
-    gain=15.0,  # NEW gain
-    timeout=10.0
-)
-
-print(f"Gain: {status.get('gain')} dB")
-print(f"AGC: {status.get('agc_enable')}")
-
-# Verify
-if abs(status.get('gain', 0) - 15.0) < 0.5:
-    print("✓ Gain change worked!")
-else:
-    print("✗ Gain change failed")
-```
-
----
-
-## Expected Behavior
-
-### For New Channels
-✅ `tune()` should create the channel with specified parameters  
-✅ Status response should match requested values  
-✅ Channel should appear in `control -v` output  
-
-### For Existing Channels
-✅ `tune()` should update the channel parameters  
-✅ Status response should show NEW values  
-✅ Channel should actually operate at new frequency/gain  
-✅ Previous settings should be replaced (not accumulate)  
-
----
-
-## Next Steps
-
-### 1. Run the Test Script
+Default host: `bee1-hf-status.local`.
 
 ```bash
-python3 test_channel_operations.py radiod.local
+# Explicit host
+pytest --radiod-host=bee3-status.local
+
+# Via env var (convenient in a shell session)
+export RADIOD_HOST=bee3-status.local
+pytest
+
+# Target just the integration test file
+pytest tests/test_integration.py --radiod-host=bee3-status.local -v
 ```
 
-This will tell us exactly what's working and what's not.
-
-### 2. Based on Results
-
-**If all tests pass:**
-- ✅ Package is working correctly
-- Previous issues may have been configuration/usage errors
-- Document correct usage patterns
-
-**If tests fail:**
-- 📋 Review detailed diagnostics
-- 🔍 Check radiod logs: `journalctl -u radiod -f`
-- 🐛 File bug report with test output
-- 🛠️ May need code fixes
-
-### 3. Document Findings
-
-Create a summary of:
-- What works
-- What doesn't work
-- Under what conditions
-- Error messages and logs
+If you don't have a reachable radiod, integration tests that depend
+on one will either skip themselves or fail with clear timeout errors;
+the unit test layer is unaffected.
 
 ---
 
-## Performance vs Functionality
-
-**Important Note:**
-
-The performance fixes we just applied improve:
-- ✅ Speed (exponential backoff, socket reuse)
-- ✅ Resource usage (less CPU, fewer sockets)
-- ✅ Scalability (can handle more channels)
-
-But they don't change **functional behavior**:
-- If tuning didn't work before, it still won't work
-- If tuning worked before, it should still work (and be faster)
-
-**So we need to test functionality separately from performance.**
-
----
-
-## Files Reference
-
-| File | Purpose |
-|------|---------|
-| `test_channel_operations.py` | Comprehensive functional test script |
-| `CHANNEL_TUNING_DIAGNOSTICS.md` | Troubleshooting guide |
-| `tests/test_integration.py` | Automated integration tests |
-| `test_performance_fixes.py` | Performance improvement verification |
-
----
-
-## Getting Help
-
-If tests reveal bugs:
-
-1. **Collect diagnostics:**
-   ```bash
-   python3 test_channel_operations.py radiod.local > test_output.log 2>&1
-   journalctl -u radiod -n 200 > radiod.log
-   ```
-
-2. **Try native tune:**
-   ```bash
-   tune -r radiod.local -s 99999999 -f 14.074M -m usb -v
-   ```
-
-3. **Check packet flow:**
-   ```bash
-   tcpdump -i any multicast and port 5006
-   ```
-
-4. **File issue with:**
-   - Test output
-   - radiod logs
-   - Network diagnostics
-   - radiod version/config
-
----
-
-## Summary
-
-You reported critical issues with channel tuning. We've created:
-
-1. ✅ Comprehensive test script to verify functionality
-2. ✅ Detailed diagnostic guide
-3. ✅ Integration tests for automated checking
-4. ✅ Code examples showing correct usage
-
-**Next step: Run the test script and see what happens.**
+## Coverage
 
 ```bash
-python3 test_channel_operations.py radiod.local
+pytest --cov=ka9q --cov-report=term-missing
+pytest --cov=ka9q --cov-report=html      # writes htmlcov/index.html
 ```
 
-This will tell us if the package works correctly or if there are bugs to fix.
+---
+
+## Protocol drift test
+
+[`tests/test_protocol_compat.py`](../tests/test_protocol_compat.py)
+cross-checks ka9q-python's `StatusType` constants against the
+upstream `ka9q-radio/src/status.h`. It looks for a sibling
+`../ka9q-radio` checkout; if absent, it skips.
+
+To run it, clone the C project next to ka9q-python:
+
+```bash
+cd ..
+git clone https://github.com/ka9q/ka9q-radio
+cd ka9q-python
+pytest tests/test_protocol_compat.py -v
+```
+
+Any drift between the Python constants and the C header will fail
+loudly — the signal you need to update [`ka9q/types.py`](../ka9q/types.py).
+
+---
+
+## Live smoke tests
+
+Not `pytest` — standalone scripts under `examples/` that exercise
+real multicast paths against a host. Useful when diagnosing
+network-layer issues.
+
+[`examples/multi_stream_smoke.py`](../examples/multi_stream_smoke.py)
+— two-channel MultiStream test. Provisions USB channels for FT8 and
+WSPR at 20 m, runs for ~20 s, prints per-SSRC packet/sample counts.
+
+```bash
+python examples/multi_stream_smoke.py --host bee3-status.local --duration 20
+```
+
+Success criterion: both labels show non-zero callbacks and samples;
+RESULT line prints `PASS`.
+
+---
+
+## Current `tests/` contents
+
+Generated from `tests/` at the time of writing. Each file is a
+pytest module unless noted.
+
+| File | Scope |
+|---|---|
+| `conftest.py` | Registers `--radiod-host` flag / `RADIOD_HOST` env var. |
+| `test_addressing.py` | Deterministic SSRC and multicast IP generation. |
+| `test_channel_verification.py` | `ensure_channel()` verification logic. |
+| `test_create_split_encoding.py` | Channel creation with split encoding params. |
+| `test_decode_functions.py` | TLV decode (int/float/double/string/socket). Unit. |
+| `test_encode_functions.py` | TLV encode + round-trip encode→decode. Unit. |
+| `test_encode_socket.py` | Socket address TLV encoding. |
+| `test_ensure_channel_encoding.py` | Encoding parameter handling in `ensure_channel()`. |
+| `test_integration.py` | Live-radiod integration: create/re-tune/gain/AGC/multiple channels. |
+| `test_iq_20khz_f32.py` | IQ 20 kHz F32 stream handling. |
+| `test_listen_multicast.py` | Multicast listener plumbing. |
+| `test_managed_stream_recovery.py` | `ManagedStream` drop/restore behavior. |
+| `test_monitor.py` | `ChannelMonitor` restart detection. |
+| `test_multihomed.py` | `interface=` parameter on multi-NIC hosts. |
+| `test_native_discovery.py` | `discover_channels_native()` pure-Python listener. |
+| `test_performance_fixes.py` | Socket reuse and retry/backoff behavior. |
+| `test_protocol_compat.py` | `StatusType` ↔ ka9q-radio `status.h` drift check (auto-skips if `../ka9q-radio` is missing). |
+| `test_remove_channel.py` | Channel teardown. |
+| `test_rtp_recorder.py` | `RTPRecorder` raw-packet capture path. |
+| `test_security_features.py` | Input validation / defensive guards. |
+| `test_ssrc_dest_unit.py` | SSRC + destination derivation. Unit. |
+| `test_ssrc_encoding_unit.py` | SSRC + encoding derivation. Unit. |
+| `test_ssrc_radiod_host_unit.py` | SSRC derivation given a host. Unit. |
+| `test_status_decoder.py` | `decode_status_packet()` and typed `ChannelStatus`/`FrontendStatus`/`PllStatus`/etc. Unit. |
+| `test_ttl_warning.py` | Multicast TTL configuration warning. |
+| `test_tune.py` | `RadiodControl.tune()` surface. |
+| `test_tune_cli.py` | `examples/tune.py` CLI parsing. |
+| `test_tune_debug.py` | Debug-tool plumbing. |
+| `test_tune_live.py` | Live-radiod `tune()` path (integration). |
+| `test_tune_method.py` | `tune()` method unit tests: timeouts, SSRC/tag match, decoding. |
+
+Also in `tests/`:
+
+- `README.md` — a longer (partly historical) narrative on the tune
+  test suite.
+- `INTEGRATION_TESTING.md`, `TROUBLESHOOTING_CHECKLIST.md` — prose
+  diagnostics.
+
+---
+
+## CI
+
+Unit tests are safe for CI — no network, no hardware. A minimal
+workflow:
+
+```yaml
+- run: pip install -e .[dev]
+- run: pytest --cov=ka9q --cov-report=xml
+```
+
+Integration and live-smoke tests need a reachable radiod and are
+typically run by a self-hosted runner on the same LAN, or manually
+during release QA.

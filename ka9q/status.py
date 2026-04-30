@@ -222,6 +222,9 @@ class ChannelStatus:
     # Options / modes
     independent_sideband: Optional[bool] = None
     lock: Optional[bool] = None                # LOCK (channel-level)
+    lifetime: Optional[int] = None             # LIFETIME — frames until self-destruct
+                                               # (0 = infinite; >0 decrements at the radiod
+                                               # frame rate ≈ 50 Hz; reset to ≥20 s on poll)
 
     # Test points
     tp1: Optional[float] = None
@@ -581,9 +584,11 @@ def decode_status_packet(buffer: bytes) -> Optional[ChannelStatus]:
         elif t == StatusType.WINDOW_TYPE:
             sp.window_type = decode_int(data, optlen)
 
-        # ---- Independent sideband / lock ----
+        # ---- Independent sideband / lock / lifetime ----
         elif t == StatusType.INDEPENDENT_SIDEBAND:
             st.independent_sideband = decode_bool(data, optlen)
+        elif t == StatusType.LIFETIME:
+            st.lifetime = decode_int(data, optlen)
 
         # ---- Test points ----
         elif t == StatusType.TP1:

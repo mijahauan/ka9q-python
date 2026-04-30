@@ -4,10 +4,12 @@ This guide covers different ways to install and use the ka9q-python package.
 
 ## For End Users
 
-### From PyPI (when published)
+### From PyPI
 ```bash
-pip install ka9q
+pip install ka9q-python
 ```
+
+The distribution name is `ka9q-python`; the import name is `ka9q`.
 
 ### From GitHub (development version)
 ```bash
@@ -43,7 +45,7 @@ This includes pytest and other testing tools.
 
 ### In requirements.txt
 ```
-ka9q>=1.0.0
+ka9q-python>=3.9.0
 ```
 
 ### In setup.py
@@ -51,7 +53,7 @@ ka9q>=1.0.0
 setup(
     name="your-app",
     install_requires=[
-        "ka9q>=1.0.0",
+        "ka9q-python>=3.9.0",
     ],
 )
 ```
@@ -60,7 +62,7 @@ setup(
 ```toml
 [project]
 dependencies = [
-    "ka9q>=1.0.0",
+    "ka9q-python>=3.9.0",
 ]
 ```
 
@@ -94,10 +96,19 @@ Test that the package is properly installed:
 python3 -c "import ka9q; print(f'ka9q version {ka9q.__version__} installed successfully')"
 ```
 
-Expected output:
+Expected output (version will match whatever is installed):
 ```
-ka9q version 1.0.0 installed successfully
+ka9q version 3.9.0 installed successfully
 ```
+
+After installation, the `ka9q` command-line tool is also on your `PATH`:
+
+```bash
+ka9q list bee1-hf-status.local
+ka9q tui  bee1-hf-status.local
+```
+
+See [CLI_GUIDE.md](CLI_GUIDE.md) for the full command reference.
 
 ## Platform-Specific Notes
 
@@ -117,14 +128,23 @@ Package works with Python's built-in networking. Use IP addresses instead of `.l
 
 ### Required
 - Python 3.9+
-- numpy>=1.24.0
-
-### Optional (installed automatically if needed)
-None - the package has no mandatory external dependencies!
+- `numpy >= 1.24.0`
 
 ### Optional (for enhanced functionality)
-- `avahi-utils` (Linux) - faster mDNS hostname resolution
-- `control` from ka9q-radio - fallback for channel discovery
+- `textual` — required for `ka9q tui`. Not pulled in by the base install; install with `pip install textual` (or bundle it into your deployment requirements).
+- `avahi-utils` (Linux) — faster mDNS hostname resolution
+- `control` from ka9q-radio — fallback path for channel discovery
+
+### Pinned to a specific ka9q-radio commit
+
+`ka9q-python` tracks a pinned ka9q-radio commit to keep protocol constants in sync. Read it from Python:
+
+```python
+from ka9q.compat import KA9Q_RADIO_COMMIT
+print(KA9Q_RADIO_COMMIT)
+```
+
+See the "ka9q-radio Compatibility" section of [../README.md](../README.md) for the drift-check workflow.
 
 ## Troubleshooting
 
@@ -143,7 +163,7 @@ Or use a virtual environment:
 ```bash
 python3 -m venv venv
 source venv/bin/activate
-pip install ka9q
+pip install ka9q-python
 ```
 
 ### "numpy" not found

@@ -1081,12 +1081,13 @@ class RadiodControl:
         logger.info(f"Setting output level for SSRC {ssrc} to {level}")
         self.send_command(cmdbuffer)
     
-    def create_channel(self, frequency_hz: float, 
+    def create_channel(self, frequency_hz: float,
                        preset: str = "iq", sample_rate: Optional[int] = None,
                        agc_enable: int = 0, gain: float = 0.0,
                        destination: Optional[str] = None,
                        encoding: int = 0,
-                       ssrc: Optional[int] = None) -> int:
+                       ssrc: Optional[int] = None,
+                       lifetime: Optional[int] = None) -> int:
         """
         Create a new channel with specified configuration
         
@@ -1115,6 +1116,16 @@ class RadiodControl:
             encoding: Output encoding (0=none, 4=F32, etc.) - see Encoding class
             ssrc: SSRC (channel identifier). If None, auto-allocated from parameters.
                   Auto-allocation uses allocate_ssrc() for deterministic, shareable SSRCs.
+            lifetime: Optional channel auto-destruct timer (radiod commit 0f8b622+).
+                  None (default) = don't send; the channel inherits radiod's
+                  Template default (infinite). Integer value = sent verbatim as
+                  the LIFETIME tag, in radiod main-loop frames; 0 = infinite,
+                  >0 = decremented at the radiod frame rate (~50 Hz at default
+                  20 ms blocktime, so ~1000 frames ≈ 20 s) and the channel
+                  self-destructs at zero. Each subsequent poll auto-extends
+                  the lifetime to at least Channel_idle_timeout (~20 s) — so
+                  callers using a finite lifetime as a crash-safe cleanup
+                  must keep polling (e.g. via tune() or set_channel_lifetime).
         
         Returns:
             The SSRC of the created channel (useful when auto-allocated)
@@ -1225,8 +1236,11 @@ class RadiodControl:
         # SSRC and command tag
         encode_int(cmdbuffer, StatusType.OUTPUT_SSRC, ssrc)
         encode_int(cmdbuffer, StatusType.COMMAND_TAG, secrets.randbits(31))
+        if lifetime is not None:
+            encode_int(cmdbuffer, StatusType.LIFETIME, int(lifetime))
+            logger.info(f"Setting LIFETIME for SSRC {ssrc} to {lifetime} frames")
         encode_eol(cmdbuffer)
-        
+
         # Send the main creation packet
         self.send_command(cmdbuffer)
         
@@ -1291,6 +1305,7 @@ class RadiodControl:
         encoding: int = 0,
         timeout: float = 5.0,
         frequency_tolerance: float = 1.0,
+        lifetime: Optional[int] = None,
     ):
         """
         Ensure a channel exists with the requested characteristics and return it.
@@ -1318,6 +1333,12 @@ class RadiodControl:
             encoding: Output encoding (0=none, 4=F32, etc.) - see Encoding class
             timeout: Maximum time to wait for channel verification (default: 5.0s)
             frequency_tolerance: Acceptable frequency deviation in Hz (default: 1.0)
+            lifetime: Optional channel auto-destruct timer in radiod frames
+                     (radiod commit 0f8b622+). When set, the LIFETIME tag is
+                     included on the creation command and on the reuse-poll
+                     so the channel's lifetime is refreshed regardless of its
+                     prior state. None (default) = don't touch lifetime.
+                     See create_channel() for the full unit semantics.
         
         Returns:
             ChannelInfo object with verified channel details, ready for RadiodStream
@@ -1401,6 +1422,12 @@ class RadiodControl:
                             f"ensure_channel: reusing existing channel SSRC {ssrc} "
                             f"at {existing.frequency/1e6:.3f} MHz"
                         )
+                        # Refresh lifetime on reuse if requested — the channel
+                        # may have been created without a finite lifetime (or
+                        # may be drifting toward expiry); a poll with LIFETIME
+                        # set forces it to the requested value.
+                        if lifetime is not None:
+                            self.set_channel_lifetime(ssrc, int(lifetime))
                         return existing
                     else:
                         logger.info(
@@ -1427,7 +1454,8 @@ class RadiodControl:
             gain=gain,
             destination=destination,
             encoding=encoding,
-            ssrc=ssrc
+            ssrc=ssrc,
+            lifetime=lifetime,
         )
         
         # Wait for channel to appear and verify it meets specs
@@ -1528,8 +1556,52 @@ class RadiodControl:
         
         logger.info(f"Removing channel SSRC {ssrc}")
         self.send_command(cmdbuffer)
-    
-    def set_squelch(self, ssrc: int, open_threshold: Optional[float] = None, 
+
+    def set_channel_lifetime(self, ssrc: int, lifetime: int):
+        """
+        Set / refresh a channel's auto-destruct timer.
+
+        ka9q-radio commit 0f8b622+ added a per-channel ``lifetime`` field
+        that decrements every radiod main-loop frame (~50 Hz at the
+        default 20 ms blocktime) and destroys the channel when it
+        reaches zero.  Polling auto-extends a non-zero lifetime to at
+        least ~20 s, so a client using this for crash-safe cleanup
+        should call this method (or any other poll) periodically as a
+        keep-alive.
+
+        Args:
+            ssrc: SSRC of the channel.
+            lifetime: New lifetime value, sent verbatim as the LIFETIME
+                tag (units: radiod frames).  ``0`` = infinite (channel
+                lives until explicitly destroyed).  ``>0`` = self-
+                destruct after that many frames; radiod will bump it up
+                to the configured idle-timeout floor (typically 1000
+                frames ≈ 20 s) when this poll is processed.
+
+        Note:
+            Older radiod builds without LIFETIME silently ignore the tag,
+            so calling this against a pre-0f8b622 radiod is a no-op
+            rather than an error.
+        """
+        _validate_ssrc(ssrc)
+        if not isinstance(lifetime, int):
+            raise ValidationError(
+                f"lifetime must be int (frames); got {type(lifetime).__name__}"
+            )
+        if lifetime < 0:
+            raise ValidationError(f"lifetime must be >= 0; got {lifetime}")
+
+        cmdbuffer = bytearray()
+        cmdbuffer.append(CMD)
+        encode_int(cmdbuffer, StatusType.OUTPUT_SSRC, ssrc)
+        encode_int(cmdbuffer, StatusType.COMMAND_TAG, secrets.randbits(31))
+        encode_int(cmdbuffer, StatusType.LIFETIME, lifetime)
+        encode_eol(cmdbuffer)
+
+        logger.info(f"Setting LIFETIME for SSRC {ssrc} to {lifetime} frames")
+        self.send_command(cmdbuffer)
+
+    def set_squelch(self, ssrc: int, open_threshold: Optional[float] = None,
                     close_threshold: Optional[float] = None, snr_squelch: Optional[bool] = None):
         """
         Set squelch parameters for a channel
@@ -1725,12 +1797,13 @@ class RadiodControl:
                 logger.debug("Reusing cached status listener socket")
             return self._status_sock
     
-    def tune(self, ssrc: int, frequency_hz: Optional[float] = None, 
+    def tune(self, ssrc: int, frequency_hz: Optional[float] = None,
              preset: Optional[str] = None, sample_rate: Optional[int] = None,
              low_edge: Optional[float] = None, high_edge: Optional[float] = None,
              gain: Optional[float] = None, agc_enable: Optional[bool] = None,
              rf_gain: Optional[float] = None, rf_atten: Optional[float] = None,
              encoding: Optional[int] = None, destination: Optional[str] = None,
+             lifetime: Optional[int] = None,
              timeout: float = 5.0) -> dict:
         """
         Tune a channel and retrieve its status (like tune.c in ka9q-radio)
@@ -1751,6 +1824,8 @@ class RadiodControl:
             rf_atten: RF front-end attenuation in dB (optional)
             encoding: Output encoding type (optional, use Encoding constants)
             destination: Destination multicast address (optional)
+            lifetime: Set/refresh the channel auto-destruct timer, in radiod
+                     frames. See ``set_channel_lifetime``. None = don't touch.
             timeout: Maximum time to wait for response in seconds (default: 5.0)
             
         Returns:
@@ -1846,7 +1921,15 @@ class RadiodControl:
             
             encode_socket(cmdbuffer, StatusType.OUTPUT_DATA_DEST_SOCKET, dest_addr, dest_port)
             logger.info(f"Setting destination for SSRC {ssrc} to {dest_addr}:{dest_port}")
-        
+
+        if lifetime is not None:
+            if not isinstance(lifetime, int) or lifetime < 0:
+                raise ValidationError(
+                    f"lifetime must be a non-negative int (frames); got {lifetime!r}"
+                )
+            encode_int(cmdbuffer, StatusType.LIFETIME, lifetime)
+            logger.info(f"Setting LIFETIME for SSRC {ssrc} to {lifetime} frames")
+
         encode_eol(cmdbuffer)
         
         # Get cached status listener (or create if first use)
@@ -2001,7 +2084,9 @@ class RadiodControl:
                 status['ttl'] = decode_int(data, optlen)
                 if status['ttl'] == 0:
                     logger.warning(f"Radiod reporting TTL=0 for SSRC {status.get('ssrc', 'unknown')}: Multicast data restricted to localhost loopback only!")
-            
+            elif type_val == StatusType.LIFETIME:
+                status['lifetime'] = decode_int(data, optlen)
+
             cp += optlen
         
         # Calculate SNR if we have the necessary data
