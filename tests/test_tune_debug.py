@@ -34,12 +34,13 @@ def print_status_fields(status):
             print(f"  {key:20s}: {value}")
 
 
-def test_basic_tune(host):
+def test_basic_tune(radiod_address):
     """Test basic tune operation with detailed output"""
+    host = radiod_address
     print(f"="*70)
     print(f"Connecting to radiod at {host}")
     print(f"="*70)
-    
+
     try:
         control = RadiodControl(host)
         print(f"✓ Connected successfully")

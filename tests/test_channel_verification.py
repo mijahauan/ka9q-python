@@ -1020,11 +1020,7 @@ def run_test_suite(radiod_address: str, test_cases: List[ChannelTestCase] = None
 
 
 # Pytest fixtures and tests
-@pytest.fixture(scope="module")
-def radiod_address():
-    """Get radiod address from environment or default"""
-    import os
-    return os.environ.get('RADIOD_ADDRESS', 'bee1-hf-status.local')
+# `radiod_address` is provided by tests/conftest.py and respects --radiod-host.
 
 
 @pytest.fixture(scope="module")
