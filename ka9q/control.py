@@ -2086,6 +2086,8 @@ class RadiodControl:
                     logger.warning(f"Radiod reporting TTL=0 for SSRC {status.get('ssrc', 'unknown')}: Multicast data restricted to localhost loopback only!")
             elif type_val == StatusType.LIFETIME:
                 status['lifetime'] = decode_int(data, optlen)
+            elif type_val == StatusType.DESCRIPTION:
+                status['description'] = decode_string(data, optlen)
 
             cp += optlen
         

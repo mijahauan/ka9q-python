@@ -78,3 +78,6 @@ dmypy.json
 # Local development
 *.local
 .env
+
+# Claude Code harness state
+.claude/

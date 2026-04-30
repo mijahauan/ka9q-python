@@ -1,5 +1,40 @@
 # Changelog
 
+## [3.10.0] - 2026-04-30
+
+### Added
+
+- **Channel-lifetime keep-alive** (radiod 0f8b622+): support for ka9q-radio's new self-destruct timer, which lets a channel declare a lifetime in radiod main-loop frames (~50 Hz at the default 20 ms blocktime); 0 means infinite, >0 decrements every frame and destroys the channel at zero. This gives crash-resilient cleanup — if a client dies, its channels expire on their own instead of lingering on radiod.
+  - `RadiodControl.set_channel_lifetime(ssrc, lifetime)` — explicit poll that sends the LIFETIME tag, suitable as a periodic keep-alive.
+  - `RadiodControl.create_channel(..., lifetime=None)` — optional kwarg; sends LIFETIME on the creation packet when provided.
+  - `RadiodControl.ensure_channel(..., lifetime=None)` — passes through to `create_channel`; on the reuse path, calls `set_channel_lifetime` so the value is enforced regardless of the channel's prior state.
+  - `RadiodControl.tune(..., lifetime=None)` — optional kwarg; LIFETIME is included in the multi-parameter command buffer.
+  - `_decode_status_response()` exposes received LIFETIME as `status['lifetime']`; `ChannelStatus.lifetime` field.
+- **`StatusType.LIFETIME = 117`** in `ka9q/types.py` (synced from ka9q-radio commit `5498aef`).
+- **`StatusType.DESCRIPTION` decode** in `_decode_status_response()`: incoming front-end / channel description strings are now surfaced as `status['description']` (the encode side already existed via `set_description`).
+
+### Backward Compatibility
+
+- Default behavior unchanged: omitting `lifetime` produces a wire packet with no LIFETIME tag, so pre-`0f8b622` radiod stays compatible and existing clients see no change. Channels created without LIFETIME inherit radiod's template default (0 = infinite) and live until destroyed.
+
+### Tests
+
+- 10 new unit tests in `tests/test_lifetime.py` cover encode-presence on each entry point, encode-absence when omitted, and validation of negative / non-int inputs.
+- Refreshed stale `tests/test_encode_socket.py` to match the current 6-byte wire format that radiod's `decode_socket()` actually expects.
+- Hardened `tests/test_native_discovery.py::test_native_discovery_with_valid_packet` to mock `RadiodControl._connect`, removing the DNS dependency on `test.local`.
+
+---
+
+## [3.9.0] - 2026-04-15
+
+### Added
+
+- **`ka9q` CLI** (`ka9q/cli.py`): new console entry point `ka9q` (declared via `[project.scripts]`), exposing channel discovery, tune, create, destroy, and status commands against a running radiod.
+- **Textual TUI** (`ka9q/tui.py`): an interactive Textual app for browsing channels and tuning interactively, with radiod and SSRC pickers. Optional install via `pip install ka9q-python[tui]`.
+- **Typed `ChannelStatus` decoder** (`ka9q/status.py`): a typed dataclass view over the dict returned by `_decode_status_response`, so callers can use attribute access and IDE-completable fields instead of dict keys.
+
+---
+
 ## [3.8.0] - 2026-04-12
 
 ### Added

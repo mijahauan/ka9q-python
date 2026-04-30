@@ -128,7 +128,10 @@ class TestNativeDiscovery(unittest.TestCase):
         # Run discovery with short duration
         # Mock time to control loop - need enough values for all time.time() calls
         time_values = [0.0, 0.1, 0.2, 1.0, 1.0, 1.0, 1.0]  # Enough for loop + logging
-        with patch.object(RadiodControl, '_decode_status_response', return_value=status_dict):
+        # Also mock _connect so the temporary RadiodControl built inside discovery
+        # doesn't try to resolve "test.local" via DNS.
+        with patch.object(RadiodControl, '_connect', return_value=None), \
+             patch.object(RadiodControl, '_decode_status_response', return_value=status_dict):
             with patch('ka9q.discovery.time.time', side_effect=time_values):
                 channels = discover_channels_native("test.local", listen_duration=0.5)
         
