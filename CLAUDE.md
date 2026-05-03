@@ -83,3 +83,53 @@ All public symbols are re-exported from `ka9q/__init__.py`. Key exports:
 ### Thread Safety
 
 All public `RadiodControl` methods are protected by `RLock`. `ManagedStream` is safe for concurrent use. The library is designed for long-running applications with multiple concurrent channels.
+
+### Upstream drift watcher
+
+`ka9q-radio` is under active development. Two scripts watch it:
+
+- **`scripts/sync_types.py`** — regenerates `ka9q/types.py` and the pin
+  files (`ka9q_radio_compat`, `ka9q/compat.py`) from the local
+  `ka9q-radio` checkout. Modes: `--check` (exit 1 on drift),
+  `--diff` (dry-run), `--apply` (write).
+
+- **`scripts/check_upstream_drift.py`** — compares the *pinned* commit
+  against `origin/main` (or any `--remote`/`--branch`) and classifies
+  the delta:
+  - **pass** — no upstream commits, or upstream advanced but no header
+    file was touched (contract intact).
+  - **warn** — header touched but no stream-critical field affected
+    (review for new capabilities or rename impact).
+  - **fail** — a stream-critical field was removed or its TLV/enum value
+    shifted. RTP delivery to clients would break if the pin advanced
+    without code changes.
+
+  The stream-critical allowlist (with rationale) is inlined at the top
+  of `check_upstream_drift.py`. It is intentionally **not** part of the
+  `ka9q/` runtime package — it's a repo-level dev tool concern, not API
+  surface. Adding a field there raises removals/value-changes from
+  yellow to red.
+
+Operator workflow when the watcher is yellow/red:
+
+1. Read the per-field detail in the report.
+2. For *added* fields: extend ka9q-python (and downstream clients) to
+   expose the new capability, then `sync_types.py --apply` to regenerate
+   `types.py` and advance the pin.
+3. For *removed* or *value-shifted* critical fields: coordinate with
+   downstream clients (hf-timestd, wspr-recorder, wsprdaemon-client,
+   psk-recorder) *before* regenerating, since they hard-code enum names
+   and values via `from ka9q.types import StatusType, Encoding`.
+4. After `--apply`: run `pytest`, then commit `types.py`,
+   `ka9q_radio_compat`, and `ka9q/compat.py` together.
+
+Sigmond exposes the watcher as `smd ka9q-watch` and as a TUI screen
+(Observe → ka9q-watch).
+
+1. Don’t assume. Don’t hide confusion. Surface tradeoffs.
+
+2. Minimum code that solves the problem. Nothing speculative.
+
+3. Touch only what you must. Clean up only your own mess.
+
+4. Define success criteria. Loop until verified.
