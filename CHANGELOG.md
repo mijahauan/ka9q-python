@@ -1,5 +1,22 @@
 # Changelog
 
+## [3.11.0] - 2026-05-06
+
+### Added
+
+- **Channel filter overrides on create / ensure / add_channel**: optional `low_edge`, `high_edge`, and `kaiser_beta` kwargs on `RadiodControl.create_channel()`, `RadiodControl.ensure_channel()`, and `MultiStream.add_channel()` — when specified, the requested filter passband is applied inline with the channel-create command (no transient at preset BW), and on the reuse path of `ensure_channel`, `set_filter` is called so the requested edges are authoritative regardless of the channel's prior state. Previously, callers were stuck with the preset's `low`/`high` values and had to either author a custom radiod preset or call `set_filter` manually after channel creation. Filter edges are not part of the SSRC hash — multiple callers requesting the same channel with different filters reconfigure last-writer-wins, matching the existing model for `gain` / `agc_enable`.
+  - Motivating clients: hf-timestd's BPSK PPS calibrator needs ~±500 Hz to match the TS1 injector's effectively-CW spectrum (the iq preset's ±5 kHz is wrong by an order of magnitude); planned SuperDARN and CODAR-sounder receivers need wider passbands than any single preset provides.
+
+### Backward Compatibility
+
+- Default behavior unchanged: omitting all three kwargs produces a wire packet with no LOW_EDGE / HIGH_EDGE / KAISER_BETA tags, so radiod uses the preset's defaults exactly as before. Reuse path also skips `set_filter` when no filter args are supplied.
+
+### Tests
+
+- 8 new unit tests in `tests/test_filter_edges.py` cover encode-presence on each entry point, encode-absence when omitted, ensure_channel forwarding on the create path, and ensure_channel reuse-path calling set_filter (only when filter args are supplied).
+
+---
+
 ## [3.10.0] - 2026-04-30
 
 ### Added

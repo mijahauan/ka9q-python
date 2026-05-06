@@ -1087,7 +1087,10 @@ class RadiodControl:
                        destination: Optional[str] = None,
                        encoding: int = 0,
                        ssrc: Optional[int] = None,
-                       lifetime: Optional[int] = None) -> int:
+                       lifetime: Optional[int] = None,
+                       low_edge: Optional[float] = None,
+                       high_edge: Optional[float] = None,
+                       kaiser_beta: Optional[float] = None) -> int:
         """
         Create a new channel with specified configuration
         
@@ -1126,6 +1129,16 @@ class RadiodControl:
                   the lifetime to at least Channel_idle_timeout (~20 s) — so
                   callers using a finite lifetime as a crash-safe cleanup
                   must keep polling (e.g. via tune() or set_channel_lifetime).
+            low_edge: Channel filter low edge in Hz, relative to channel
+                  center (typically negative for symmetric IQ filters).
+                  None = use the preset's default. Useful for clients that
+                  need a narrower or wider passband than the preset provides
+                  (e.g. BPSK PPS calibration with a near-CW signal needs a
+                  much narrower filter than the iq preset's default).
+            high_edge: Channel filter high edge in Hz, relative to channel
+                  center. None = use the preset's default. See low_edge.
+            kaiser_beta: Filter window Kaiser beta. None = use radiod default.
+                  Higher beta = sharper transition + more sidelobe rejection.
         
         Returns:
             The SSRC of the created channel (useful when auto-allocated)
@@ -1173,8 +1186,13 @@ class RadiodControl:
             _validate_sample_rate(sample_rate)
         _validate_gain(gain)
         
+        filter_desc = ""
+        if low_edge is not None or high_edge is not None or kaiser_beta is not None:
+            filter_desc = (f", filter=[{low_edge},{high_edge}]"
+                           f"{f' beta={kaiser_beta}' if kaiser_beta is not None else ''}")
         logger.info(f"Creating channel: SSRC={ssrc}, freq={frequency_hz/1e6:.3f} MHz, "
-                   f"demod={preset}, rate={sample_rate}Hz, agc={agc_enable}, gain={gain}dB, enc={encoding}")
+                   f"demod={preset}, rate={sample_rate}Hz, agc={agc_enable}, gain={gain}dB, "
+                   f"enc={encoding}{filter_desc}")
         
         # Build a single command packet with ALL parameters
         # This ensures radiod creates the channel with the correct settings
@@ -1200,7 +1218,21 @@ class RadiodControl:
         if sample_rate:
             encode_int(cmdbuffer, StatusType.OUTPUT_SAMPRATE, sample_rate)
             logger.info(f"Setting sample rate for SSRC {ssrc} to {sample_rate} Hz")
-        
+
+        # Filter edges + Kaiser beta — override the preset defaults inline
+        # with the create command so the channel goes live with the requested
+        # passband from frame zero (no transient at preset BW). Same TLV path
+        # as set_filter().
+        if low_edge is not None:
+            encode_double(cmdbuffer, StatusType.LOW_EDGE, low_edge)
+            logger.info(f"Setting LOW_EDGE for SSRC {ssrc} to {low_edge} Hz")
+        if high_edge is not None:
+            encode_double(cmdbuffer, StatusType.HIGH_EDGE, high_edge)
+            logger.info(f"Setting HIGH_EDGE for SSRC {ssrc} to {high_edge} Hz")
+        if kaiser_beta is not None:
+            encode_float(cmdbuffer, StatusType.KAISER_BETA, kaiser_beta)
+            logger.info(f"Setting KAISER_BETA for SSRC {ssrc} to {kaiser_beta}")
+
         # AGC setting
         encode_int(cmdbuffer, StatusType.AGC_ENABLE, agc_enable)
         logger.info(f"Setting AGC_ENABLE for SSRC {ssrc} to {agc_enable}")
@@ -1306,6 +1338,9 @@ class RadiodControl:
         timeout: float = 5.0,
         frequency_tolerance: float = 1.0,
         lifetime: Optional[int] = None,
+        low_edge: Optional[float] = None,
+        high_edge: Optional[float] = None,
+        kaiser_beta: Optional[float] = None,
     ):
         """
         Ensure a channel exists with the requested characteristics and return it.
@@ -1339,7 +1374,21 @@ class RadiodControl:
                      so the channel's lifetime is refreshed regardless of its
                      prior state. None (default) = don't touch lifetime.
                      See create_channel() for the full unit semantics.
-        
+            low_edge: Optional channel filter low edge in Hz (relative to
+                     channel center). When specified, the requested filter is
+                     applied both to newly-created channels (inline with the
+                     create command) and to reused channels (via set_filter
+                     after the reuse decision), so ensure_channel always
+                     returns a channel with the requested passband.
+                     None (default) = use the preset's filter edges.
+                     Note: filter edges are not part of the channel identity
+                     (they don't participate in SSRC allocation), so a second
+                     caller requesting the same channel with different edges
+                     will reconfigure the filter — last-writer-wins, same
+                     model as gain/AGC.
+            high_edge: See low_edge.
+            kaiser_beta: Optional filter window Kaiser beta. None = radiod default.
+
         Returns:
             ChannelInfo object with verified channel details, ready for RadiodStream
         
@@ -1428,6 +1477,21 @@ class RadiodControl:
                         # set forces it to the requested value.
                         if lifetime is not None:
                             self.set_channel_lifetime(ssrc, int(lifetime))
+                        # Apply filter edges on reuse so the requested
+                        # passband is authoritative regardless of the prior
+                        # channel state. ChannelInfo doesn't expose current
+                        # filter edges (radiod's discovery payload doesn't
+                        # carry them reliably), so we re-send rather than
+                        # compare.
+                        if (low_edge is not None
+                                or high_edge is not None
+                                or kaiser_beta is not None):
+                            self.set_filter(
+                                ssrc,
+                                low_edge=low_edge,
+                                high_edge=high_edge,
+                                kaiser_beta=kaiser_beta,
+                            )
                         return existing
                     else:
                         logger.info(
@@ -1456,6 +1520,9 @@ class RadiodControl:
             encoding=encoding,
             ssrc=ssrc,
             lifetime=lifetime,
+            low_edge=low_edge,
+            high_edge=high_edge,
+            kaiser_beta=kaiser_beta,
         )
         
         # Wait for channel to appear and verify it meets specs

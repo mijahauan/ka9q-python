@@ -129,11 +129,18 @@ class MultiStream:
         on_samples: Optional[SampleCallback] = None,
         on_stream_dropped: Optional[Callable] = None,
         on_stream_restored: Optional[Callable] = None,
+        low_edge: Optional[float] = None,
+        high_edge: Optional[float] = None,
+        kaiser_beta: Optional[float] = None,
     ) -> ChannelInfo:
         """Provision a channel and register it for reception.
 
         Must be called before start(). All channels must resolve to the
         same multicast address (enforced).
+
+        Filter parameters (low_edge, high_edge, kaiser_beta) override the
+        preset's default passband. None = use preset defaults. See
+        RadiodControl.ensure_channel for the full semantics.
 
         Returns the ChannelInfo from ensure_channel().
         """
@@ -144,6 +151,9 @@ class MultiStream:
             agc_enable=agc_enable,
             gain=gain,
             encoding=encoding,
+            low_edge=low_edge,
+            high_edge=high_edge,
+            kaiser_beta=kaiser_beta,
         )
 
         addr = channel_info.multicast_address
