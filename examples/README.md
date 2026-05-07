@@ -245,6 +245,25 @@ python3 examples/advanced_features_demo.py
 
 ---
 
+### `spectrum_example.py`
+
+**What it does**: Receives real-time FFT spectrum data from radiod and prints bin statistics.
+
+**Concepts demonstrated**:
+- Using `SpectrumStream` for spectrum data
+- Accessing `bin_power_db` for dB-scaled FFT bins
+- Spectrum channel creation and polling
+- Frequency axis reconstruction from bin metadata
+
+**Run it**:
+```bash
+python3 examples/spectrum_example.py bee1-hf-status.local --freq 14.1e6
+```
+
+**Expected output**: Per-frame spectrum statistics (bin count, peak power, noise floor) updated ~10 times per second.
+
+---
+
 ## Diagnostics
 
 The `diagnostics/` subdirectory contains utilities for troubleshooting and testing.

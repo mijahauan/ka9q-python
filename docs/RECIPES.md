@@ -501,6 +501,190 @@ Until then, use the recipe above.
 
 ---
 
+## Recipe 5 — Spectrum display and spectrogram (FFT bin data)
+
+ka9q-radio’s `radiod` can produce FFT spectrum data in addition to
+demodulated audio. The ka9q-web frontend uses this for its waterfall
+display. `SpectrumStream` gives Python clients the same capability.
+
+### 5.1 How spectrum data differs from audio
+
+Audio streams use RTP packets on the data multicast group (port 5004).
+Spectrum data is completely different:
+
+- It flows over the **status multicast channel** (port 5006), not RTP.
+- It arrives as `BIN_DATA` (float32) or `BIN_BYTE_DATA` (uint8)
+  vectors inside TLV-encoded status packets.
+- It is **poll-driven**: the client sends periodic COMMAND packets to
+  request fresh FFT output; radiod responds with status packets
+  containing the bin vectors.
+- The demodulator type is `SPECT_DEMOD` (float32 output) or
+  `SPECT2_DEMOD` (quantised uint8 output, more compact).
+
+`SpectrumStream` handles all of this internally.
+
+### 5.2 Basic spectrum display
+
+```python
+from ka9q import RadiodControl, SpectrumStream
+
+def on_spectrum(status):
+    db = status.spectrum.bin_power_db      # numpy float32 array
+    freq = status.frequency                # center frequency, Hz
+    rbw = status.spectrum.resolution_bw    # bin width, Hz
+    n = len(db)
+    print(f"{n} bins at {freq/1e6:.3f} MHz, "
+          f"RBW {rbw:.1f} Hz, "
+          f"peak {db.max():.1f} dB, floor {db.min():.1f} dB")
+
+with RadiodControl("bee1-hf-status.local") as ctl:
+    with SpectrumStream(
+        control=ctl,
+        frequency_hz=14.1e6,
+        bin_count=2048,
+        resolution_bw=50.0,
+        on_spectrum=on_spectrum,
+    ) as stream:
+        import time
+        time.sleep(60)  # receive spectrum for 60 seconds
+```
+
+### 5.3 Building a spectrogram
+
+A spectrogram is a time-vs-frequency image where each row is one
+spectrum frame. Accumulate the `bin_power_db` arrays into a 2-D
+matrix:
+
+```python
+import numpy as np
+from ka9q import RadiodControl, SpectrumStream
+
+rows = []
+
+def on_spectrum(status):
+    db = status.spectrum.bin_power_db
+    if db is not None:
+        rows.append(db.copy())
+
+with RadiodControl("bee1-hf-status.local") as ctl:
+    with SpectrumStream(
+        control=ctl,
+        frequency_hz=14.1e6,
+        bin_count=1024,
+        resolution_bw=100.0,
+        averaging=5,
+        on_spectrum=on_spectrum,
+    ) as stream:
+        import time
+        time.sleep(30)
+
+# rows is now a list of 1-D numpy arrays; stack into a 2-D image
+spectrogram = np.array(rows)  # shape: (time_steps, n_bins)
+print(f"Spectrogram: {spectrogram.shape[0]} frames x "
+      f"{spectrogram.shape[1]} bins")
+
+# Render with matplotlib:
+# import matplotlib.pyplot as plt
+# plt.imshow(spectrogram.T, aspect="auto", origin="lower",
+#            cmap="viridis", vmin=-120, vmax=-40)
+# plt.colorbar(label="dB")
+# plt.xlabel("Time (frame)"); plt.ylabel("Bin")
+# plt.show()
+```
+
+### 5.4 FFT parameters
+
+`SpectrumStream` exposes radiod’s full FFT configuration:
+
+| Parameter | Default | Description |
+|---|---|---|
+| `bin_count` | 1024 | Number of frequency bins |
+| `resolution_bw` | 100.0 Hz | Bandwidth per bin |
+| `window_type` | None (radiod default: Kaiser) | FFT window function (see `WindowType`) |
+| `kaiser_beta` | None | Kaiser window shape parameter |
+| `averaging` | None | Number of FFTs averaged per output |
+| `overlap` | None | Window overlap ratio (0.0–1.0) |
+| `demod_type` | `SPECT2_DEMOD` | `SPECT_DEMOD` for float32, `SPECT2_DEMOD` for uint8 |
+| `poll_interval_sec` | 0.1 | Seconds between poll commands |
+
+radiod uses two internal algorithms depending on resolution
+bandwidth relative to a crossover frequency (default 200 Hz):
+
+- **Wideband** (rbw > 200 Hz): operates on raw A/D samples.
+- **Narrowband** (rbw ≤ 200 Hz): downconverts to complex baseband
+  first. Higher resolution but higher CPU cost.
+
+### 5.5 Frequency axis reconstruction
+
+Bin order in the delivered arrays is: bin 0 = DC (center frequency),
+bins 1..N/2 = positive offsets, bins N/2+1..N-1 = negative offsets.
+To build a frequency axis:
+
+```python
+def bin_frequencies(center_hz, bin_count, resolution_bw):
+    """Return frequency axis for spectrum bins (Hz)."""
+    import numpy as np
+    bins = np.arange(bin_count)
+    # Shift so bin 0 = DC is at center
+    offsets = np.where(bins <= bin_count // 2,
+                       bins, bins - bin_count)
+    return center_hz + offsets * resolution_bw
+```
+
+### 5.6 Retuning
+
+`SpectrumStream.set_frequency()` retunes the spectrum channel
+without stopping and restarting:
+
+```python
+stream.start()
+time.sleep(10)
+stream.set_frequency(7.1e6)   # switch to 40m band
+time.sleep(10)
+stream.stop()
+```
+
+### 5.7 Combining spectrum with audio
+
+A common pattern for interactive SDR applications: display a
+spectrogram with `SpectrumStream` and play audio from a selected
+frequency with `ManagedStream`. Both use the same `RadiodControl`:
+
+```python
+from ka9q import RadiodControl, SpectrumStream, ManagedStream
+
+with RadiodControl("radiod.local") as ctl:
+    # Wideband spectrum display
+    spectrum = SpectrumStream(
+        control=ctl,
+        frequency_hz=14.1e6,
+        bin_count=2048,
+        resolution_bw=50.0,
+        on_spectrum=render_waterfall,
+    )
+    spectrum.start()
+
+    # Narrowband audio for a selected signal
+    audio = ManagedStream(
+        control=ctl,
+        frequency_hz=14.074e6,
+        preset="usb",
+        sample_rate=12000,
+        on_samples=play_audio,
+    )
+    audio.start()
+
+    # ... user clicks on waterfall to retune audio ...
+    # ctl.set_frequency(audio.channel.ssrc, new_freq)
+
+    audio.stop()
+    spectrum.stop()
+```
+
+This is the pattern David Gonsalves’ spectrogram client will use.
+
+---
+
 ## Further reading
 
 - [GETTING_STARTED.md](GETTING_STARTED.md) — install, mDNS, multi-homed hosts

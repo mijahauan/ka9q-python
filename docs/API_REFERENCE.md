@@ -42,6 +42,7 @@ Pick the highest layer that fits:
 | Continuous samples | [`RadiodStream`](../ka9q/stream.py) | You want numpy arrays with gap-filling |
 | Self-healing samples | [`ManagedStream`](../ka9q/managed_stream.py) | Long-running client that must survive radiod restarts |
 | Many channels, one socket | [`MultiStream`](../ka9q/multi_stream.py) | 10+ channels on the same multicast group |
+| Spectrum / FFT data | [`SpectrumStream`](../ka9q/spectrum_stream.py) | Spectrogram display, band monitoring, signal search |
 
 All layers sit on top of [`RadiodControl`](../ka9q/control.py), which
 speaks the TLV protocol to radiod over multicast UDP.
@@ -396,7 +397,18 @@ Derived properties:
   `deemph_tc`, `deemph_gain`, `threshold_extend`.
 - `SpectrumStatus` — `avg`, `base`, `step`, `shape`, `fft_n`,
   `overlap`, `resolution_bw`, `noise_bw`, `bin_count`, `crossover`,
-  `window_type`.
+  `window_type`, `bin_data`, `bin_byte_data`.
+
+  **Bin vectors** (populated when the status packet contains spectrum
+  data from a `SPECT_DEMOD` or `SPECT2_DEMOD` channel):
+
+  - `bin_data: Optional[np.ndarray]` — float32 I²+Q² power per bin
+    (SPECT_DEMOD). Bin 0 = DC, 1..N/2 = positive, N/2+1..N-1 = negative.
+  - `bin_byte_data: Optional[np.ndarray]` — uint8 quantised log-power
+    (SPECT2_DEMOD). Reconstruct dB with `base + byte * step`.
+  - `bin_power_db -> Optional[np.ndarray]` — **property** that returns
+    dB values regardless of source format (10*log10 for float,
+    base + byte*step for byte). Returns `None` if no bin data is present.
 - `Filter2Status` — `blocking`, `blocksize`, `fir_length`,
   `kaiser_beta`.
 - `OpusStatus` — `bit_rate`, `dtx`, `application`, `bandwidth`, `fec`.
@@ -517,6 +529,82 @@ for freq in (14.074e6, 7.074e6, 3.573e6):
                       on_samples=lambda s, q, f=freq: handle(f, s, q))
 multi.start()
 ```
+
+### `SpectrumStream`
+
+Source: [spectrum_stream.py](../ka9q/spectrum_stream.py). Receives
+real-time FFT spectrum data from radiod via the status multicast
+channel (port 5006). Unlike audio streams which use RTP, spectrum
+data arrives as `BIN_DATA` or `BIN_BYTE_DATA` TLV vectors inside
+status packets.
+
+```python
+SpectrumStream(
+    control,                     # RadiodControl
+    frequency_hz,                # center frequency (Hz)
+    bin_count=1024,              # number of FFT bins
+    resolution_bw=100.0,         # bin bandwidth (Hz)
+    *,
+    demod_type=DemodType.SPECT2_DEMOD,  # SPECT_DEMOD or SPECT2_DEMOD
+    window_type=None,            # see WindowType (default: Kaiser)
+    kaiser_beta=None,            # Kaiser window shape parameter
+    averaging=None,              # FFTs averaged per response
+    overlap=None,                # window overlap ratio (0.0–1.0)
+    poll_interval_sec=0.1,       # seconds between poll commands
+    on_spectrum=None,            # (ChannelStatus) -> None
+)
+```
+
+- `start() -> int` — create the spectrum channel and begin receiving.
+  Returns the SSRC.
+- `stop()` — stop threads, close socket, remove the channel from radiod.
+- `set_frequency(frequency_hz)` — retune the spectrum center frequency.
+- `ssrc -> Optional[int]` — the allocated SSRC.
+- `frames_received -> int` — count of spectrum frames delivered.
+- Supports `with` (context manager).
+
+The `on_spectrum` callback receives a fully-decoded `ChannelStatus`
+whose `.spectrum.bin_data` or `.spectrum.bin_byte_data` is populated.
+Use `.spectrum.bin_power_db` for a format-independent numpy array of
+dB values.
+
+```python
+from ka9q import RadiodControl, SpectrumStream
+
+def on_spectrum(status):
+    db = status.spectrum.bin_power_db
+    freq = status.frequency
+    rbw = status.spectrum.resolution_bw
+    print(f"{len(db)} bins at {freq/1e6:.3f} MHz, "
+          f"peak {db.max():.1f} dB, floor {db.min():.1f} dB")
+
+with RadiodControl("radiod.local") as ctl:
+    with SpectrumStream(
+        control=ctl,
+        frequency_hz=14.1e6,
+        bin_count=2048,
+        resolution_bw=50.0,
+        on_spectrum=on_spectrum,
+    ) as stream:
+        time.sleep(30)  # receive for 30 seconds
+```
+
+#### How spectrum data flows
+
+Spectrum data uses a completely different path from audio:
+
+| | Audio | Spectrum |
+|---|---|---|
+| Transport | RTP on data multicast (port 5004) | TLV inside status multicast (port 5006) |
+| Packet type | RTP with audio payload | Status packet with `BIN_DATA`/`BIN_BYTE_DATA` vectors |
+| Trigger | Continuous (radiod pushes) | Poll-driven (`SpectrumStream` sends periodic COMMAND packets) |
+| Demod type | `LINEAR_DEMOD`, `FM_DEMOD`, `WFM_DEMOD` | `SPECT_DEMOD` (float32) or `SPECT2_DEMOD` (uint8) |
+
+`SpectrumStream` handles the polling, socket management, SSRC
+filtering, and TLV decoding internally. The callback receives a
+ready-to-use `ChannelStatus` with numpy arrays.
+
+---
 
 ### `StreamQuality`, `GapSource`, `GapEvent`
 

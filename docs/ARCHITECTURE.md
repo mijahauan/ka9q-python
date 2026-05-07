@@ -48,6 +48,7 @@ ka9q/
 ├── stream.py           RadiodStream — continuous sample delivery
 ├── managed_stream.py   ManagedStream — self-healing single-channel wrapper
 ├── multi_stream.py     MultiStream — shared-socket multi-SSRC receiver
+├── spectrum_stream.py  SpectrumStream — real-time FFT bin data receiver
 ├── pps_calibrator.py   L6 BPSK PPS chain-delay calibration
 ├── cli.py              `ka9q` console script (list / query / set / tui)
 └── tui.py              Textual TUI panels
@@ -94,6 +95,17 @@ on the same multicast group with O(1) socket resources. Production
 users: wspr-recorder, psk-recorder, hf-timestd.
 
 See [MULTI_STREAM.md](MULTI_STREAM.md) for depth.
+
+### 5. `SpectrumStream` ([spectrum_stream.py](../ka9q/spectrum_stream.py))
+
+Real-time FFT spectrum receiver. Spectrum data takes a different path
+from audio: it arrives as `BIN_DATA` / `BIN_BYTE_DATA` TLV vectors
+inside status packets on port 5006 (not RTP on port 5004).
+`SpectrumStream` creates a `SPECT2_DEMOD` channel, polls radiod
+periodically to trigger fresh FFT output, and delivers decoded
+`ChannelStatus` objects (with `spectrum.bin_power_db` as a numpy
+array) to an `on_spectrum` callback. Use this for spectrogram
+displays, band activity monitors, and signal-search applications.
 
 ---
 
@@ -252,6 +264,7 @@ packet atomically, releases.
 - `MultiStream`: one health thread, one RTP receive thread total
   (shared across all slots).
 - `RadiodStream`: one RTP receive thread.
+- `SpectrumStream`: one status-channel receive thread, one poll thread.
 
 All are daemon threads; `stop()` joins with a 5 s timeout.
 
@@ -331,7 +344,7 @@ socket attributes to `None` in `finally` blocks.
 ### Stream lifecycle
 
 Every streaming class (`RadiodStream`, `ManagedStream`, `MultiStream`,
-`RTPRecorder`) follows the same shape:
+`SpectrumStream`, `RTPRecorder`) follows the same shape:
 
 ```
 __init__ → start() → (threads run) → stop() → (threads join, sockets closed)
