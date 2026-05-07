@@ -106,6 +106,7 @@ from .managed_stream import (
     StreamState,
 )
 from .multi_stream import MultiStream
+from .spectrum_stream import SpectrumStream
 
 __all__ = [
     # Control
@@ -165,6 +166,9 @@ __all__ = [
 
     # Multi Stream (shared socket, multiple channels)
     'MultiStream',
+
+    # Spectrum Stream (FFT bin data receiver)
+    'SpectrumStream',
 
     # Utilities
     'generate_multicast_ip',

@@ -14,8 +14,11 @@ for driving the TUI, CLI, and programmatic access.
 from __future__ import annotations
 
 import math
+import struct
 from dataclasses import dataclass, field, fields, asdict
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
+
+import numpy as np
 
 from .types import StatusType, DemodType, Encoding, WindowType
 
@@ -133,6 +136,32 @@ class SpectrumStatus:
     bin_count: Optional[int] = None
     crossover: Optional[float] = None       # Hz
     window_type: Optional[int] = None       # see WindowType
+
+    # Spectrum bin vectors — populated from BIN_DATA or BIN_BYTE_DATA TLVs.
+    # bin_data: float32 power values (SPECT_DEMOD), frequency order:
+    #   bin 0 = DC, bins 1..N/2 = positive, bins N/2+1..N-1 = negative
+    bin_data: Optional[np.ndarray] = field(default=None, repr=False)
+    # bin_byte_data: raw uint8 quantised bins (SPECT2_DEMOD), same order.
+    # Convert to dB with: dB = base + byte_value * step
+    bin_byte_data: Optional[np.ndarray] = field(default=None, repr=False)
+
+    @property
+    def bin_power_db(self) -> Optional[np.ndarray]:
+        """Spectrum bins as dB values, regardless of source format.
+
+        For SPECT_DEMOD (bin_data): 10*log10(value), clamped to -150 dB.
+        For SPECT2_DEMOD (bin_byte_data): base + byte * step.
+        Returns None if no bin data is present.
+        """
+        if self.bin_data is not None:
+            with np.errstate(divide='ignore'):
+                db = 10.0 * np.log10(np.maximum(self.bin_data, 1e-30))
+            return db.astype(np.float32)
+        if self.bin_byte_data is not None:
+            base = self.base if self.base is not None else 0.0
+            step_val = self.step if self.step is not None else 1.0
+            return (base + self.bin_byte_data.astype(np.float32) * step_val)
+        return None
 
 
 @dataclass
@@ -636,7 +665,21 @@ def decode_status_packet(buffer: bytes) -> Optional[ChannelStatus]:
         elif t == StatusType.OPUS_FEC:
             op.fec = decode_int(data, optlen)
 
-        # Spectrum data vectors, unused tags, etc. — skip silently.
+        # ---- Spectrum bin vectors ----
+        elif t == StatusType.BIN_DATA:
+            # SPECT_DEMOD: vector of float32 power values (big-endian IEEE 754)
+            n_bins = optlen // 4
+            if n_bins > 0:
+                sp.bin_data = np.array(
+                    struct.unpack_from("!" + "f" * n_bins, data),
+                    dtype=np.float32,
+                )
+        elif t == StatusType.BIN_BYTE_DATA:
+            # SPECT2_DEMOD: vector of uint8 quantised log-power values
+            if optlen > 0:
+                sp.bin_byte_data = np.frombuffer(data[:optlen], dtype=np.uint8).copy()
+
+        # Unused tags — skip silently.
 
     return st
 
