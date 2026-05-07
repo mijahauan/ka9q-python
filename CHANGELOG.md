@@ -1,5 +1,30 @@
 # Changelog
 
+## [3.12.0] - 2026-05-07
+
+### Added
+
+- **Spectrum bin vector decoding**: `decode_status_packet()` now decodes `BIN_DATA` (float32, `SPECT_DEMOD`) and `BIN_BYTE_DATA` (uint8, `SPECT2_DEMOD`) TLV vectors from radiod status packets. New fields on `SpectrumStatus`:
+  - `bin_data: Optional[np.ndarray]` — float32 power values per FFT bin.
+  - `bin_byte_data: Optional[np.ndarray]` — uint8 quantised log-power values.
+  - `bin_power_db` property — returns dB values regardless of source format (10*log10 for float data, `base + byte * step` for byte data).
+
+- **`SpectrumStream`**: new class for receiving real-time FFT spectrum data from radiod. Spectrum data flows over the status multicast channel (port 5006) as TLV vectors, not over RTP. `SpectrumStream` handles channel creation, periodic polling, SSRC filtering, and delivers decoded `ChannelStatus` objects (with populated `spectrum.bin_power_db`) to an `on_spectrum` callback. Supports retuning via `set_frequency()` and context manager usage.
+
+### Documentation
+
+- API_REFERENCE.md: SpectrumStream section, SpectrumStatus bin vector fields, quickstart table updated.
+- ARCHITECTURE.md: module listing, abstraction layer description, threading model updated.
+- RECIPES.md: Recipe 5 covering spectrum display, spectrogram accumulation, frequency axis reconstruction, FFT parameter tuning, and combined audio+spectrum patterns.
+- New `examples/spectrum_example.py`: runnable CLI example for real-time spectrum reception.
+
+### Tests
+
+- 13 new unit tests in `tests/test_spectrum.py` covering float32 and uint8 bin decoding, multi-byte TLV lengths, `bin_power_db` property, combined metadata+bins, edge cases, and import verification.
+
+---
+
+
 ## [3.11.0] - 2026-05-06
 
 ### Added
