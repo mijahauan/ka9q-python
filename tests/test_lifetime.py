@@ -173,3 +173,91 @@ class TestCreateChannelLifetime:
         )
         assert sent
         assert not _has_lifetime_tag(sent[0])
+
+
+class TestMultiStreamLifetime:
+    """MultiStream stores ``lifetime`` per-slot and forwards it to
+    ensure_channel on both the initial add and the drop/restore path,
+    plus exposes a set_channel_lifetime() keep-alive method.
+
+    Asserted at the ``RadiodControl.ensure_channel`` boundary — these
+    tests don't exercise the wire encoding (covered above), they verify
+    that MultiStream wires the kwarg through correctly.
+    """
+
+    def _make_multi_with_mock_control(self, ssrc=12345):
+        from ka9q.multi_stream import MultiStream
+        from ka9q.discovery import ChannelInfo
+
+        control = MagicMock()
+        control.ensure_channel.return_value = ChannelInfo(
+            ssrc=ssrc,
+            preset="iq",
+            sample_rate=12000,
+            frequency=14_074_000.0,
+            snr=0.0,
+            multicast_address="239.1.2.3",
+            port=5004,
+        )
+        multi = MultiStream(control=control)
+        return multi, control
+
+    def test_add_channel_forwards_lifetime(self):
+        multi, control = self._make_multi_with_mock_control()
+        multi.add_channel(
+            frequency_hz=14_074_000.0,
+            preset="iq",
+            sample_rate=12000,
+            lifetime=6000,
+        )
+        kwargs = control.ensure_channel.call_args.kwargs
+        assert kwargs["lifetime"] == 6000
+
+    def test_add_channel_lifetime_none_when_omitted(self):
+        multi, control = self._make_multi_with_mock_control()
+        multi.add_channel(
+            frequency_hz=14_074_000.0,
+            preset="iq",
+            sample_rate=12000,
+        )
+        kwargs = control.ensure_channel.call_args.kwargs
+        assert kwargs["lifetime"] is None
+
+    def test_restore_reapplies_stored_lifetime(self):
+        """A slot added with lifetime=N must re-pass N on _attempt_restore."""
+        multi, control = self._make_multi_with_mock_control()
+        multi.add_channel(
+            frequency_hz=14_074_000.0,
+            preset="iq",
+            sample_rate=12000,
+            lifetime=6000,
+        )
+        ssrc = next(iter(multi._slots))
+        slot = multi._slots[ssrc]
+        slot.dropped = True
+        control.ensure_channel.reset_mock()
+
+        multi._attempt_restore(ssrc, slot)
+
+        kwargs = control.ensure_channel.call_args.kwargs
+        assert kwargs["lifetime"] == 6000
+
+    def test_set_channel_lifetime_updates_slot_and_wire(self):
+        multi, control = self._make_multi_with_mock_control()
+        multi.add_channel(
+            frequency_hz=14_074_000.0,
+            preset="iq",
+            sample_rate=12000,
+            lifetime=6000,
+        )
+        ssrc = next(iter(multi._slots))
+
+        multi.set_channel_lifetime(ssrc, 9000)
+
+        control.set_channel_lifetime.assert_called_once_with(ssrc, 9000)
+        assert multi._slots[ssrc].lifetime == 9000
+
+    def test_set_channel_lifetime_unknown_ssrc_is_noop(self):
+        multi, control = self._make_multi_with_mock_control()
+        multi.set_channel_lifetime(99999, 6000)
+        control.set_channel_lifetime.assert_not_called()

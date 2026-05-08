@@ -81,6 +81,7 @@ class _ChannelSlot:
     last_packet_time: float = 0.0
     dropped: bool = False
     first_rtp_timestamp: Optional[int] = None
+    lifetime: Optional[int] = None
 
 
 class MultiStream:
@@ -132,6 +133,7 @@ class MultiStream:
         low_edge: Optional[float] = None,
         high_edge: Optional[float] = None,
         kaiser_beta: Optional[float] = None,
+        lifetime: Optional[int] = None,
     ) -> ChannelInfo:
         """Provision a channel and register it for reception.
 
@@ -141,6 +143,15 @@ class MultiStream:
         Filter parameters (low_edge, high_edge, kaiser_beta) override the
         preset's default passband. None = use preset defaults. See
         RadiodControl.ensure_channel for the full semantics.
+
+        ``lifetime`` opts the channel into radiod's self-destruct timer
+        (radiod commit 0f8b622+, see RadiodControl.set_channel_lifetime).
+        The value is stored per-slot so the drop/restore path re-applies
+        it: a channel that radiod self-destructs and we then restore
+        won't silently lose its lifetime. The caller is still
+        responsible for periodic keep-alive via
+        ``set_channel_lifetime()`` (or by calling
+        RadiodControl.set_channel_lifetime directly on the SSRC).
 
         Returns the ChannelInfo from ensure_channel().
         """
@@ -154,6 +165,7 @@ class MultiStream:
             low_edge=low_edge,
             high_edge=high_edge,
             kaiser_beta=kaiser_beta,
+            lifetime=lifetime,
         )
 
         addr = channel_info.multicast_address
@@ -189,6 +201,7 @@ class MultiStream:
             on_stream_dropped=on_stream_dropped,
             on_stream_restored=on_stream_restored,
             deliver_interval=self._deliver_interval,
+            lifetime=lifetime,
         )
         self._slots[ssrc] = slot
 
@@ -223,6 +236,24 @@ class MultiStream:
             f"MultiStream started: {len(self._slots)} channels on "
             f"{self._multicast_address}:{self._port}"
         )
+
+    def set_channel_lifetime(self, ssrc: int, lifetime: int) -> None:
+        """Refresh the LIFETIME tag on one channel and update slot state.
+
+        Suitable as a periodic keep-alive: callers should invoke this on
+        every active SSRC at a cadence shorter than the lifetime so the
+        radiod self-destruct counter never reaches zero. The new value
+        is also stored in the slot, so a subsequent drop/restore will
+        re-apply this value rather than the original ``add_channel``
+        argument.
+
+        No-op if ``ssrc`` is not in this MultiStream.
+        """
+        slot = self._slots.get(ssrc)
+        if slot is None:
+            return
+        self._control.set_channel_lifetime(ssrc, lifetime)
+        slot.lifetime = lifetime
 
     def stop(self) -> None:
         """Stop threads and close socket."""
@@ -426,6 +457,7 @@ class MultiStream:
                 preset=slot.preset,
                 sample_rate=slot.sample_rate,
                 encoding=slot.encoding,
+                lifetime=slot.lifetime,
             )
             new_ssrc = channel_info.ssrc
             if new_ssrc != ssrc:

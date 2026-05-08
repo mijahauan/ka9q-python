@@ -1,5 +1,42 @@
 # Changelog
 
+## [3.13.0] - 2026-05-08
+
+### Added
+
+- **`MultiStream` channel-lifetime support**: closes the gap from 3.10.0 where
+  `RadiodControl.{create_channel,ensure_channel,tune}` accepted a `lifetime=`
+  kwarg but `MultiStream.add_channel()` did not, leaving MultiStream-based
+  clients (psk-recorder, hfdl-recorder, hf-timestd) unable to opt into
+  radiod's channel self-destruct timer for crash-resilient cleanup.
+  - `MultiStream.add_channel(..., lifetime=None)` — optional kwarg, forwarded
+    to the internal `ensure_channel` call. Stored per-slot.
+  - **Drop/restore path now re-applies lifetime**: `_attempt_restore` reads
+    the stored slot lifetime and passes it to `ensure_channel`. Previously,
+    a channel that radiod self-destructed and MultiStream restored would
+    silently lose its LIFETIME until the next external keep-alive — the
+    most dangerous failure mode now closed.
+  - `MultiStream.set_channel_lifetime(ssrc, lifetime)` — keep-alive method
+    that updates both the wire (via `RadiodControl.set_channel_lifetime`)
+    and the slot's stored lifetime, so the value survives subsequent
+    drop/restore cycles.
+
+### Backward Compatibility
+
+- Default behavior unchanged: omitting `lifetime` produces a packet with no
+  LIFETIME tag (ChannelSlot.lifetime defaults to None). Existing MultiStream
+  callers see no change in wire behavior.
+
+### Tests
+
+- 5 new unit tests in `tests/test_lifetime.py::TestMultiStreamLifetime` cover:
+  forward-on-add, lifetime=None default, restore-reapplies-lifetime,
+  set_channel_lifetime updates slot+wire, set_channel_lifetime is a no-op for
+  unknown SSRC. 258 unit tests still green.
+
+---
+
+
 ## [3.12.0] - 2026-05-07
 
 ### Added
