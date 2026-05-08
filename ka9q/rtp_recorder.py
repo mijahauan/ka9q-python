@@ -127,34 +127,72 @@ def parse_rtp_header(data: bytes) -> Optional[RTPHeader]:
 def rtp_to_wallclock(rtp_timestamp: int, channel: ChannelInfo) -> Optional[float]:
     """
     Convert RTP timestamp to Unix wall-clock time
-    
+
     Uses the GPS_TIME/RTP_TIMESNAP timing information from radiod.
-    
+
     Args:
         rtp_timestamp: RTP timestamp from packet header
         channel: ChannelInfo with gps_time, rtp_timesnap, sample_rate
-    
+
     Returns:
         Unix timestamp (seconds) or None if timing info unavailable
+
+    Wraparound handling:
+        RTP timestamps are 32-bit and wrap every 2**32 samples.  At
+        96 kHz that's 12.43 hours; at 16 kHz it's 74.6 hours.  The
+        ``rtp_timesnap``/``gps_time`` pair is captured once at SSRC
+        discovery, so an SSRC alive longer than one wrap period is
+        in a *later* RTP epoch than the snapshot — the naive signed
+        32-bit subtraction is correct only within ±2**31 samples
+        (~6 hours at 96 kHz) of the snapshot, beyond which it
+        silently aliases.
+
+        We disambiguate by picking the wrap-epoch count ``k`` (full
+        2**32-sample periods elapsed since the snapshot) that places
+        the resulting wall-clock time closest to the local system
+        clock.  System clock stays within seconds of true UTC even
+        under hostile conditions, and the wrap ambiguity period is
+        hours, so this is robust without tight NTP discipline.
+
+        Observed on bee1 2026-05-08: long-running SSRCs caused TSL3
+        SHM samples stuck at the snapshot's wall-clock time, ~12.4 h
+        behind.  Chrony filtered every sample and reach fell to 0.
     """
     if channel.gps_time is None or channel.rtp_timesnap is None:
         return None
-    
+
     # Convert GPS nanoseconds to Unix time
     # GPS epoch is Jan 6, 1980; Unix epoch is Jan 1, 1970
     # gps_time is nanoseconds since GPS epoch, so add GPS_UTC_OFFSET (in ns)
     # AND subtract current GPS_LEAP_SECONDS (18s) to align with UTC
     sender_time = channel.gps_time + BILLION * (GPS_UTC_OFFSET - GPS_LEAP_SECONDS)
-    
-    # Add offset from RTP timestamp difference
-    # Cast to int32 for proper wrapping behavior
+
+    # Signed 32-bit RTP delta — correct within ±2**31 samples of
+    # the snapshot.
     rtp_delta = int((rtp_timestamp - channel.rtp_timesnap) & 0xFFFFFFFF)
     if rtp_delta > 0x7FFFFFFF:
         rtp_delta -= 0x100000000
-    
-    time_offset = BILLION * rtp_delta // channel.sample_rate
-    
-    wall_time_ns = sender_time + time_offset
+
+    base_wall_ns = sender_time + (BILLION * rtp_delta // channel.sample_rate)
+
+    # Adjust for wrap epochs.  One period = 2**32 samples =
+    # BILLION * 2**32 // sample_rate ns.  Pick the integer k that
+    # minimises |base_wall_ns + k*period - sys_now_ns| — i.e. the
+    # value closest to the system clock.  Exact when sys clock is
+    # within ±period/2 of true UTC.
+    period_ns = BILLION * 0x100000000 // channel.sample_rate
+    sys_now_ns = int(time.time() * BILLION)
+    diff_ns = sys_now_ns - base_wall_ns
+    if period_ns > 0:
+        # Round-to-nearest of diff_ns / period_ns (Python `//` is
+        # floor; bias by half-period before flooring to round).
+        if diff_ns >= 0:
+            k = (diff_ns + period_ns // 2) // period_ns
+        else:
+            k = -(((-diff_ns) + period_ns // 2) // period_ns)
+    else:
+        k = 0
+    wall_time_ns = base_wall_ns + k * period_ns
 
     # Apply L6 BPSK PPS chain-delay calibration if available.
     # This corrects for the end-to-end RF→ADC→DSP→RTP latency
