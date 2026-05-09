@@ -134,6 +134,7 @@ class MultiStream:
         high_edge: Optional[float] = None,
         kaiser_beta: Optional[float] = None,
         lifetime: Optional[int] = None,
+        timeout: float = 5.0,
     ) -> ChannelInfo:
         """Provision a channel and register it for reception.
 
@@ -153,6 +154,18 @@ class MultiStream:
         ``set_channel_lifetime()`` (or by calling
         RadiodControl.set_channel_lifetime directly on the SSRC).
 
+        ``timeout`` is forwarded to ``ensure_channel`` and bounds the
+        wait for radiod's status-message ACK confirming the channel
+        was created.  The default 5 s is fine for an idle radiod, but
+        when many producers register channels in quick succession
+        (e.g. a multi-client deployment restarting) radiod can stall
+        long enough that 5 s isn't enough — observed on bee1 2026-05-08
+        as the T6 BPSK PPS channel timing out and crashing
+        timestd-core-recorder, which in turn left TSL3 SHM stale.
+        Callers in latency-sensitive setups should pass a longer
+        value (10-30 s) so a brief radiod-busy window doesn't fail
+        the whole channel registration.
+
         Returns the ChannelInfo from ensure_channel().
         """
         channel_info = self._control.ensure_channel(
@@ -166,6 +179,7 @@ class MultiStream:
             high_edge=high_edge,
             kaiser_beta=kaiser_beta,
             lifetime=lifetime,
+            timeout=timeout,
         )
 
         addr = channel_info.multicast_address
