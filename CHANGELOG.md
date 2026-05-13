@@ -1,5 +1,53 @@
 # Changelog
 
+## [3.14.0] - 2026-05-13
+
+### Added
+
+- **`RadiodControl(client_id=...)` for per-client deterministic multicast
+  destinations.**  Closes the CONTRACT v0.3 §7 gap where the spec said
+  "ka9q-python derives the multicast destination" but the implementation
+  never did, so every client on a given radiod landed on radiod's
+  config-file default group.  Two clients with no operator action are now
+  guaranteed to use distinct multicast addresses without per-client
+  derivation code.
+  - New `client_id: Optional[str] = None` kwarg on
+    `RadiodControl.__init__`.  When set, `ensure_channel(destination=None)`
+    auto-derives a `239.x.y.z` address via
+    `generate_multicast_ip(client_id, radiod_host=self.status_address)`.
+  - Destination precedence inside `ensure_channel`:
+    `(1) explicit destination=` >
+    `(2) derived from (client_id, status_address)` >
+    `(3) None → radiod's config default`.
+  - Multi-radiod handling falls out of the hash: a `psk-recorder` instance
+    pointing at `bee1-hf-status.local` derives a different address from
+    one pointing at `bee3-hf-status.local`.
+  - Multi-client handling falls out of the hash: `psk-recorder` and
+    `wspr-recorder` on the same radiod derive different addresses.
+  - `MultiStream._attempt_restore` inherits the behavior because it reuses
+    the same `RadiodControl` instance (and thus the same `client_id`).
+    Restoration after a radiod restart re-creates each channel on the
+    same per-client multicast group it was on before.
+  - Because `allocate_ssrc` already hashes `destination` into the SSRC,
+    per-client destinations produce per-client SSRCs — radiod's channel
+    table cleanly separates concurrent clients.
+
+### Backward Compatibility
+
+- Default behavior unchanged: `RadiodControl(status)` without `client_id`
+  preserves pre-3.14 semantics — `destination=None` flows through, radiod
+  uses its config-file default, every channel from that radiod shares one
+  multicast group.  Clients opt in by passing `client_id="<name>"`.
+
+### Tests
+
+- 9 new unit tests in `tests/test_client_id_destination.py` cover:
+  client_id default-None / set / stored; precedence (explicit wins over
+  derived, no client_id → None); uniqueness invariants (same client on
+  two radiods → distinct; two clients on one radiod → distinct;
+  same client + same radiod → repeatable); SSRC divergence per client.
+  134 offline unit tests pass.
+
 ## [3.13.0] - 2026-05-08
 
 ### Added

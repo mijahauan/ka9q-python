@@ -691,18 +691,35 @@ class RadiodControl:
     """
     
     def __init__(self, status_address: str, max_commands_per_sec: int = 100,
-                 interface: Optional[str] = None):
+                 interface: Optional[str] = None,
+                 client_id: Optional[str] = None):
         """
         Initialize radiod control
-        
+
         Args:
             status_address: mDNS name or IP:port of radiod status stream
             max_commands_per_sec: Maximum commands per second (rate limiting)
             interface: IP address of network interface for multicast (e.g., '192.168.1.100').
                       Required on multi-homed systems. If None, uses INADDR_ANY (0.0.0.0).
+            client_id: Identity string for this client application
+                      (e.g. ``"psk-recorder"``, ``"hf-timestd"``).  When set,
+                      :py:meth:`ensure_channel` derives a per-(client, radiod)
+                      multicast destination via
+                      :py:func:`ka9q.generate_multicast_ip` whenever the
+                      caller does not supply an explicit ``destination=``.
+                      Same client_id + same radiod -> same destination
+                      (all of that client's channels share one multicast
+                      group); different client_id OR different radiod ->
+                      distinct destinations (peer clients on one station
+                      never collide; one client targeting two radiods
+                      sees one destination per radiod).  ``None`` (default)
+                      preserves pre-3.14 behavior: when no ``destination=``
+                      is passed, radiod uses its config-file default and
+                      every client lands on the same group.
         """
         self.status_address = status_address
         self.interface = interface
+        self.client_id = client_id
         self.socket = None
         self._status_sock = None  # Cached status listener socket for tune()
         self._status_sock_lock = None  # Will be initialized when needed
@@ -1363,8 +1380,16 @@ class RadiodControl:
             agc_enable: Enable automatic gain control (0=off, 1=on, default: 0)
             gain: Manual gain in dB (default: 0.0). Only used when agc_enable=0
             destination: RTP destination multicast address (optional).
-                        If not specified, uses radiod's default from config file.
-                        If specified, becomes part of the channel identity (SSRC).
+                        Precedence: (1) explicit ``destination=`` wins;
+                        (2) otherwise if the RadiodControl was constructed
+                        with ``client_id=``, this method derives a
+                        deterministic ``239.x.y.z`` address from the
+                        (client_id, status_address) pair so each peer
+                        client on a station gets its own multicast group;
+                        (3) otherwise (``destination=None`` and no
+                        ``client_id``), radiod's config-file default is
+                        used.  The resolved address becomes part of the
+                        channel identity (SSRC).
             encoding: Output encoding (0=none, 4=F32, etc.) - see Encoding class
             timeout: Maximum time to wait for channel verification (default: 5.0s)
             frequency_tolerance: Acceptable frequency deviation in Hz (default: 1.0)
@@ -1418,15 +1443,32 @@ class RadiodControl:
             applications requesting the same parameters will share the same
             channel, reducing radiod resource usage.
         """
+        from .addressing import generate_multicast_ip
         from .discovery import ChannelInfo, discover_channels
-        
+
         # Validate inputs
         _validate_frequency(frequency_hz)
         _validate_sample_rate(sample_rate)
         _validate_gain(gain)
         _validate_preset(preset)
         _validate_timeout(timeout)
-        
+
+        # CONTRACT v0.3 §7: when the RadiodControl was constructed with a
+        # client_id and the caller didn't pass an explicit destination,
+        # derive a deterministic per-(client, radiod) multicast address.
+        # This makes peer clients on the same host land on distinct
+        # multicast groups without per-client derivation code.  An
+        # explicit destination= still wins (e.g. operator override).
+        if destination is None and self.client_id:
+            destination = generate_multicast_ip(
+                unique_id=self.client_id,
+                radiod_host=self.status_address,
+            )
+            logger.debug(
+                "ensure_channel: derived destination=%s for client_id=%r "
+                "radiod=%r", destination, self.client_id, self.status_address,
+            )
+
         # Compute deterministic SSRC from parameters (including radiod identity)
         ssrc = allocate_ssrc(
             frequency_hz=frequency_hz,
