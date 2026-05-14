@@ -727,13 +727,28 @@ Dataclass: `packets_received`, `packets_dropped`,
 
 ```python
 parse_rtp_header(data: bytes) -> Optional[RTPHeader]
-rtp_to_wallclock(rtp_timestamp: int, channel: ChannelInfo) -> Optional[float]
+rtp_to_wallclock(
+    rtp_timestamp: int,
+    channel: ChannelInfo,
+    wallclock_hint_sec: Optional[float] = None,
+) -> Optional[float]
 ```
 
 `rtp_to_wallclock()` returns `None` unless `channel.gps_time` and
 `channel.rtp_timesnap` are both populated. When
 `channel.chain_delay_correction_ns` is set (see below), it is
 subtracted from the computed wallclock.
+
+The `wallclock_hint_sec` parameter (v3.14.2+) lets callers supply an
+approximate UTC reference for 32-bit RTP wrap-epoch disambiguation
+without falling back to `time.time()`. Authority-aware callers
+(e.g. those reading `rtp_to_utc_offset_ns` from an `hf-timestd`
+authority.json) should pass this hint to keep the labeling path off
+the chrony-disciplined system clock (METROLOGY.md §4.5 RTP-reference
+invariant). The hint only needs ±period/2 accuracy (≥6 hours at
+typical sample rates), so even a coarse value is sufficient. When
+omitted, the function falls back to `time.time()` for backward
+compatibility.
 
 ---
 

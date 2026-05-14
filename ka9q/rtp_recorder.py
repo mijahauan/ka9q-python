@@ -124,7 +124,11 @@ def parse_rtp_header(data: bytes) -> Optional[RTPHeader]:
     )
 
 
-def rtp_to_wallclock(rtp_timestamp: int, channel: ChannelInfo) -> Optional[float]:
+def rtp_to_wallclock(
+    rtp_timestamp: int,
+    channel: ChannelInfo,
+    wallclock_hint_sec: Optional[float] = None,
+) -> Optional[float]:
     """
     Convert RTP timestamp to Unix wall-clock time
 
@@ -133,6 +137,15 @@ def rtp_to_wallclock(rtp_timestamp: int, channel: ChannelInfo) -> Optional[float
     Args:
         rtp_timestamp: RTP timestamp from packet header
         channel: ChannelInfo with gps_time, rtp_timesnap, sample_rate
+        wallclock_hint_sec: Approximate UTC seconds, used solely to
+            disambiguate the 32-bit RTP wrap epoch (see below).  Must be
+            within ±period/2 of true UTC (period = 2**32 / sample_rate
+            seconds, ≥6 hours for typical sample rates).  When omitted,
+            falls back to ``time.time()`` — convenient but couples the
+            result to the host system clock.  Callers that have an
+            hf-timestd authority offset available should pass it
+            explicitly to keep the labeling path off the chrony-disciplined
+            system clock (METROLOGY.md §4.5 RTP-reference invariant).
 
     Returns:
         Unix timestamp (seconds) or None if timing info unavailable
@@ -149,10 +162,10 @@ def rtp_to_wallclock(rtp_timestamp: int, channel: ChannelInfo) -> Optional[float
 
         We disambiguate by picking the wrap-epoch count ``k`` (full
         2**32-sample periods elapsed since the snapshot) that places
-        the resulting wall-clock time closest to the local system
-        clock.  System clock stays within seconds of true UTC even
-        under hostile conditions, and the wrap ambiguity period is
-        hours, so this is robust without tight NTP discipline.
+        the resulting wall-clock time closest to ``wallclock_hint_sec``
+        (or ``time.time()`` if no hint was given).  Either source needs
+        only ±period/2 accuracy, so this stays robust even when the
+        hinting reference is loose.
 
         Observed on bee1 2026-05-08: long-running SSRCs caused TSL3
         SHM samples stuck at the snapshot's wall-clock time, ~12.4 h
@@ -181,7 +194,10 @@ def rtp_to_wallclock(rtp_timestamp: int, channel: ChannelInfo) -> Optional[float
     # value closest to the system clock.  Exact when sys clock is
     # within ±period/2 of true UTC.
     period_ns = BILLION * 0x100000000 // channel.sample_rate
-    sys_now_ns = int(time.time() * BILLION)
+    if wallclock_hint_sec is not None:
+        sys_now_ns = int(wallclock_hint_sec * BILLION)
+    else:
+        sys_now_ns = int(time.time() * BILLION)
     diff_ns = sys_now_ns - base_wall_ns
     if period_ns > 0:
         # Round-to-nearest of diff_ns / period_ns (Python `//` is

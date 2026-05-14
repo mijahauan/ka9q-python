@@ -1,5 +1,26 @@
 # Changelog
 
+## [3.14.2] - 2026-05-14
+
+### Added
+
+- **`rtp_to_wallclock()` gains optional `wallclock_hint_sec` parameter.**
+  When supplied, the function uses the hint to disambiguate the 32-bit
+  RTP wrap epoch instead of calling `time.time()`.  Authority-aware
+  callers (those with access to an hf-timestd `rtp_to_utc_offset_ns`)
+  can now keep the labeling path off the chrony-disciplined system
+  clock, per the METROLOGY.md §4.5 RTP-reference invariant.  The hint
+  only needs ±period/2 accuracy (≥6 hours at typical sample rates).
+  When omitted, the function falls back to `time.time()` for backward
+  compatibility — existing callers are unaffected.
+
+### Tests
+
+- 3 new in `tests/test_rtp_recorder.py`: hint bypasses `time.time()`
+  entirely; hint at a different wrap epoch correctly overrides system
+  clock; default path still consults `time.time()` when no hint is
+  given.
+
 ## [3.14.1] - 2026-05-14
 
 ### Fixed
