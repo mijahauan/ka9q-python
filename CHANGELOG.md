@@ -1,5 +1,36 @@
 # Changelog
 
+## [3.14.1] - 2026-05-14
+
+### Fixed
+
+- **`RadiodStream`: multi-interface multicast join (parity with
+  `MultiStream`).**  Extends Rob Robinett's `e3acb6a` fix from
+  `multi_stream.py` to `stream.py` so the per-stream `RadiodStream`
+  socket also joins on every local IPv4 interface instead of the
+  single one the kernel picks via `INADDR_ANY`.  Without this, a
+  `RadiodStream` consumer of a co-located radiod with `ttl=0` (or any
+  output that arrives on a non-default-route interface) silently
+  received zero packets.  Most visible to clients that use the
+  per-stream API directly (codar-sounder, hf-timestd's legacy T6
+  path) rather than the shared `MultiStream` socket.
+
+### Refactor
+
+- The helper that enumerates IPv4 interfaces and calls
+  `IP_ADD_MEMBERSHIP` on each is factored into a new package-private
+  `ka9q/_multicast.py` module.  Both `multi_stream.py` and `stream.py`
+  now import from it.  Same behaviour, one implementation.
+  `rtp_recorder.RtpRecorder` still uses the single-interface join —
+  separate fix.
+
+### Tests
+
+- 8 new in `tests/test_multicast_helpers.py`: enumerator behaviour,
+  per-interface join failure handling (one interface failing doesn't
+  abort the loop), empty-enumeration safety, both stream classes
+  pulling the helper from the shared module.
+
 ## [3.14.0] - 2026-05-13
 
 ### Added

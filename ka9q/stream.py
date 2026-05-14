@@ -36,6 +36,7 @@ import numpy as np
 from datetime import datetime, timezone
 from typing import Optional, Callable, List
 
+from ._multicast import join_multicast_all_interfaces
 from .discovery import ChannelInfo
 from .rtp_recorder import RTPHeader, parse_rtp_header, rtp_to_wallclock
 from .resequencer import PacketResequencer, RTPPacket
@@ -232,22 +233,34 @@ class RadiodStream:
         
         # Bind to port
         sock.bind(('0.0.0.0', self.channel.port))
-        
-        # Join multicast group
-        mreq = struct.pack(
-            '=4s4s',
-            socket.inet_aton(self.channel.multicast_address),
-            socket.inet_aton('0.0.0.0')
+
+        # Join the multicast group on EVERY local IPv4 interface (lo,
+        # ens0, etc.) — not via INADDR_ANY, which leaves the choice to
+        # the kernel's routing table and silently misses radiod outputs
+        # that arrive on a non-default interface.  Most notably, a
+        # co-located radiod with TTL=0 emits only on `lo`; an
+        # INADDR_ANY join typically resolves to `ens0` and never sees
+        # those packets.  Same helper used by MultiStream (the shared-
+        # socket abstraction) so both classes have identical behaviour.
+        joined = join_multicast_all_interfaces(
+            sock, self.channel.multicast_address,
         )
-        sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
-        
+        if not joined:
+            logger.warning(
+                "RadiodStream: no interface accepted the multicast "
+                "join for %s — recvfrom() will return nothing",
+                self.channel.multicast_address,
+            )
+        else:
+            logger.debug(
+                "RadiodStream: joined %s:%d on interfaces: %s",
+                self.channel.multicast_address, self.channel.port,
+                ", ".join(joined),
+            )
+
         # Timeout for periodic running check
         sock.settimeout(1.0)
-        
-        logger.debug(
-            f"Joined multicast {self.channel.multicast_address}:{self.channel.port}"
-        )
-        
+
         return sock
     
     def _receive_loop(self):

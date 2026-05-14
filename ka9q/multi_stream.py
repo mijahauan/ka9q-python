@@ -39,7 +39,6 @@ Usage:
     multi.stop()
 """
 
-import fcntl
 import logging
 import socket
 import struct
@@ -60,73 +59,7 @@ from .stream_quality import GapEvent, GapSource, StreamQuality
 logger = logging.getLogger(__name__)
 
 
-# Linux SIOCGIFADDR — fetch IPv4 of an interface by name.  Used to enumerate
-# every UP IPv4 interface so the multicast group join can be made on each
-# of them.  Without this, joining with INADDR_ANY lets the kernel pick a
-# single interface (typically the default-route one), which misses:
-#
-#   * Loopback-only multicast emitted by a co-located radiod with TTL=0
-#     (packets sit on `lo`; the kernel won't deliver them to a socket
-#     joined on `ens0`).
-#   * Multi-homed stations where one radiod streams on lo and another
-#     on eth: a single MultiStream should consume both.
-#
-# Joining on EVERY local IPv4 interface lets one socket receive from any
-# radiod source on any path.
-_SIOCGIFADDR = 0x8915
-
-
-def _iter_local_ipv4_interfaces():
-    """Yield (ifname, ipv4_addr_str) for every local interface with an IPv4.
-
-    Order is `socket.if_nameindex()` order — typically 'lo' first, then
-    ens0/eth0/wlan0/etc.  Interfaces without an IPv4 (IPv6-only, or
-    freshly-created with no addr) are skipped silently.  Stays
-    stdlib-only on Linux (no netifaces/psutil dependency).
-    """
-    try:
-        names = socket.if_nameindex()
-    except OSError:
-        return
-    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        for _idx, ifname in names:
-            try:
-                raw = fcntl.ioctl(
-                    probe.fileno(),
-                    _SIOCGIFADDR,
-                    struct.pack("256s", ifname.encode()[:15]),
-                )
-                addr = socket.inet_ntoa(raw[20:24])
-            except OSError:
-                continue
-            yield ifname, addr
-    finally:
-        probe.close()
-
-
-def _join_multicast_all_interfaces(sock: socket.socket,
-                                   multicast_address: str) -> List[str]:
-    """Join `multicast_address` on every local IPv4 interface.
-
-    Returns the list of interface names where the join succeeded.  Empty
-    list means no interface was usable (extremely rare — even a freshly-
-    booted box has `lo`).  Per-interface failures are logged at DEBUG
-    and skipped (e.g., a virtual interface without an IPv4).
-    """
-    joined: List[str] = []
-    group = socket.inet_aton(multicast_address)
-    for ifname, ifaddr in _iter_local_ipv4_interfaces():
-        mreq = struct.pack("=4s4s", group, socket.inet_aton(ifaddr))
-        try:
-            sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
-            joined.append(ifname)
-        except OSError as exc:
-            logger.debug(
-                "multicast join on %s (%s) failed: %s",
-                ifname, ifaddr, exc,
-            )
-    return joined
+from ._multicast import join_multicast_all_interfaces
 
 
 @dataclass
@@ -396,8 +329,9 @@ class MultiStream:
         # via INADDR_ANY (which lets the kernel pick a single interface
         # — typically the default route — and silently misses radiod
         # outputs on other paths, e.g. TTL=0 loopback packets from a
-        # co-located radiod).
-        joined = _join_multicast_all_interfaces(
+        # co-located radiod).  Helper lives in ka9q._multicast so
+        # stream.RadiodStream uses identical logic.
+        joined = join_multicast_all_interfaces(
             sock, self._multicast_address,
         )
         if not joined:
