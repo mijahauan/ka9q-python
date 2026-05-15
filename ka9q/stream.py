@@ -66,9 +66,30 @@ def parse_rtp_samples(
     """
     try:
         if is_iq:
-            floats = np.frombuffer(payload, dtype=np.float32)
+            # Honor `encoding` instead of always assuming F32LE. radiod
+            # silently downgrades F32 → S16 for some IQ-channel
+            # configurations (high sample rate + wide filter); when that
+            # happens the bytes mis-decode as float32 to ~10^34 garbage
+            # and occasional NaN (bit pattern of S16 sample pairs that
+            # happens to land in the IEEE-754 NaN-encoding region).
+            # Confirmed on bee1 2026-05-15 for T6/TSL3 BPSK PPS channel:
+            # requested encoding=4 (F32LE), granted encoding=2 (S16BE),
+            # decoded as F32LE → NaN-poisoned input, TSL3 dark.
+            if encoding == 1:  # S16LE
+                int16s = np.frombuffer(payload, dtype='<i2')
+                floats = int16s.astype(np.float32) / 32768.0
+            elif encoding == 2:  # S16BE
+                int16s = np.frombuffer(payload, dtype='>i2')
+                floats = int16s.astype(np.float32) / 32768.0
+            elif encoding == 8:  # F32BE
+                floats = np.frombuffer(payload, dtype='>f4').astype(np.float32)
+            elif encoding == 0 or encoding == 4:  # F32LE (or 0=default treated as F32LE)
+                floats = np.frombuffer(payload, dtype='<f4').astype(np.float32)
+            else:
+                logger.warning(f"Unsupported IQ encoding {encoding}, falling back to F32LE")
+                floats = np.frombuffer(payload, dtype='<f4').astype(np.float32)
             if len(floats) % 2 != 0:
-                logger.warning(f"Odd number of floats in IQ payload: {len(floats)}")
+                logger.warning(f"Odd number of samples in IQ payload: {len(floats)}")
                 return None
             samples = floats[0::2] + 1j * floats[1::2]
             return samples.astype(np.complex64)

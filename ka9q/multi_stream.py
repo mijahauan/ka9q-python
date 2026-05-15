@@ -201,12 +201,21 @@ class MultiStream:
         ssrc = channel_info.ssrc
         is_iq = preset.lower() in ("iq", "spectrum")
 
+        # Use the encoding radiod actually granted (channel_info.encoding)
+        # rather than the encoding we requested. radiod silently downgrades
+        # F32 → S16 for some IQ-channel configurations; storing the requested
+        # value caused parse_rtp_samples to decode upstream bytes with the
+        # wrong dtype and produce NaN-poisoned garbage. The granted encoding
+        # is authoritative. Fall back to the caller's value if channel_info
+        # doesn't carry an encoding (or carries 0 = "none/default").
+        granted_encoding = getattr(channel_info, 'encoding', 0) or encoding
+
         slot = _ChannelSlot(
             channel_info=channel_info,
             frequency_hz=frequency_hz,
             preset=preset,
             sample_rate=sample_rate,
-            encoding=encoding,
+            encoding=granted_encoding,
             is_iq=is_iq,
             resequencer=PacketResequencer(
                 buffer_size=self._resequence_buffer_size,
